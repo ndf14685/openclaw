@@ -11,6 +11,7 @@ import {
   resolveConfiguredChannelPluginIds,
 } from "./channel-plugin-ids.js";
 import { normalizePluginsConfig } from "./config-state.js";
+import type { PluginDiscoveryResult } from "./discovery.js";
 import { loadManifestMetadataSnapshot } from "./manifest-contract-eligibility.js";
 import { passesManifestOwnerBasePolicy } from "./manifest-owner-policy.js";
 import { defaultSlotIdForKey } from "./slots.js";
@@ -45,6 +46,7 @@ function collectBundledChannelOwnerPluginIds(params: {
   env: NodeJS.ProcessEnv;
   workspaceDir?: string;
   bundledPluginsDir?: string;
+  discovery?: PluginDiscoveryResult;
 }): string[] {
   const plugins = normalizePluginsConfig(params.config.plugins);
   const channelIds = new Set(
@@ -68,6 +70,7 @@ function collectBundledChannelOwnerPluginIds(params: {
     config: params.config,
     env,
     workspaceDir: params.workspaceDir,
+    discovery: params.discovery,
   });
   const pluginIds = new Set<string>();
   for (const plugin of snapshot.plugins) {
@@ -144,6 +147,7 @@ export function resolveEffectivePluginIds(params: {
   env: NodeJS.ProcessEnv;
   workspaceDir?: string;
   bundledPluginsDir?: string;
+  discovery?: PluginDiscoveryResult;
 }): string[] {
   const autoEnabled = applyPluginAutoEnable({
     config: params.config,
@@ -164,6 +168,7 @@ export function resolveEffectivePluginIds(params: {
     activationSourceConfig: params.config,
     workspaceDir: params.workspaceDir,
     env: params.env,
+    discovery: params.discovery,
   })) {
     ids.add(pluginId);
   }
@@ -173,6 +178,7 @@ export function resolveEffectivePluginIds(params: {
     env: params.env,
     workspaceDir: params.workspaceDir,
     ...(params.bundledPluginsDir ? { bundledPluginsDir: params.bundledPluginsDir } : {}),
+    discovery: params.discovery,
   })) {
     ids.add(pluginId);
   }
@@ -181,6 +187,7 @@ export function resolveEffectivePluginIds(params: {
     activationSourceConfig: params.config,
     workspaceDir: params.workspaceDir,
     env: params.env,
+    discovery: params.discovery,
   }).pluginIds) {
     ids.add(pluginId);
   }

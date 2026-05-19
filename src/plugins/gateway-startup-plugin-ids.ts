@@ -15,6 +15,7 @@ import { hasExplicitChannelConfig } from "./channel-presence-policy.js";
 import { collectPluginConfigContractMatches } from "./config-contracts.js";
 import { resolveEffectivePluginActivationState } from "./config-state.js";
 import { isPluginEnabledByDefaultForPlatform } from "./default-enablement.js";
+import type { PluginDiscoveryResult } from "./discovery.js";
 import {
   collectConfiguredSpeechProviderIds,
   normalizeConfiguredSpeechProviderIdForStartup,
@@ -659,6 +660,7 @@ export function resolveChannelPluginIds(params: {
   config: OpenClawConfig;
   workspaceDir?: string;
   env: NodeJS.ProcessEnv;
+  discovery?: PluginDiscoveryResult;
 }): string[] {
   return [...loadGatewayStartupPluginPlan(params).channelPluginIds];
 }
@@ -926,6 +928,7 @@ export function loadGatewayStartupPluginPlan(params: {
   index?: PluginRegistrySnapshot;
   metadataSnapshot?: PluginMetadataSnapshot;
   platform?: NodeJS.Platform;
+  discovery?: PluginDiscoveryResult;
 }): GatewayStartupPluginPlan {
   const snapshotConfig = params.activationSourceConfig ?? params.config;
   const metadataSnapshot =
@@ -943,6 +946,7 @@ export function loadGatewayStartupPluginPlan(params: {
           workspaceDir: params.workspaceDir,
           env: params.env,
           ...(params.index ? { index: params.index } : {}),
+          discovery: params.discovery,
         });
   return resolveGatewayStartupPluginPlanFromRegistry({
     config: params.config,

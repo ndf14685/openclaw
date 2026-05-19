@@ -1,5 +1,6 @@
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { getCurrentPluginMetadataSnapshot } from "./current-plugin-metadata-snapshot.js";
+import type { PluginDiscoveryResult } from "./discovery.js";
 import { isInstalledPluginEnabled } from "./installed-plugin-index.js";
 import type { PluginManifestContractListKey, PluginManifestRecord } from "./manifest-registry.js";
 import { loadPluginMetadataSnapshot } from "./plugin-metadata-snapshot.js";
@@ -71,6 +72,7 @@ export function loadManifestContractSnapshot(params: {
   config?: OpenClawConfig;
   workspaceDir?: string;
   env?: NodeJS.ProcessEnv;
+  discovery?: PluginDiscoveryResult;
 }): PluginMetadataManifestView {
   const snapshot = loadManifestMetadataSnapshot(params);
   return {
@@ -83,6 +85,7 @@ export function loadManifestMetadataRegistry(params: {
   config?: OpenClawConfig;
   workspaceDir?: string;
   env?: NodeJS.ProcessEnv;
+  discovery?: PluginDiscoveryResult;
 }): PluginMetadataRegistryView {
   const snapshot = loadManifestMetadataSnapshot(params);
   return {
@@ -95,6 +98,7 @@ export function loadManifestMetadataSnapshot(params: {
   config?: OpenClawConfig;
   workspaceDir?: string;
   env?: NodeJS.ProcessEnv;
+  discovery?: PluginDiscoveryResult;
 }): PluginMetadataSnapshot {
   const config = params.config ?? {};
   const env = params.env ?? process.env;
@@ -111,5 +115,6 @@ export function loadManifestMetadataSnapshot(params: {
     config,
     env,
     ...(params.workspaceDir ? { workspaceDir: params.workspaceDir } : {}),
+    discovery: params.discovery,
   });
 }

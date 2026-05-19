@@ -60,12 +60,5 @@ export type LoadPluginMetadataSnapshotParams = {
   env: NodeJS.ProcessEnv;
   index?: InstalledPluginIndex;
   preferPersisted?: boolean;
-  /**
-   * Pre-computed plugin discovery result. When supplied, the internal
-   * `loadPluginManifestRegistry`/`loadPluginManifestRegistryForInstalledIndex`
-   * call uses it instead of re-running `discoverOpenClawPlugins`. Callers that
-   * already hold a discovery snapshot (e.g. the runtime registry orchestrator)
-   * should supply this to avoid a redundant filesystem walk.
-   */
   discovery?: PluginDiscoveryResult;
 };

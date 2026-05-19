@@ -15,6 +15,7 @@ import {
   resolveEffectivePluginActivationState,
 } from "./config-state.js";
 import { isPluginEnabledByDefaultForPlatform } from "./default-enablement.js";
+import type { PluginDiscoveryResult } from "./discovery.js";
 import {
   hasExplicitManifestOwnerTrust,
   isActivatedManifestOwner,
@@ -450,6 +451,7 @@ function resolveScopedChannelOwnerPluginIds(params: {
   workspaceDir?: string;
   env: NodeJS.ProcessEnv;
   manifestRecords?: readonly PluginManifestRecord[];
+  discovery?: PluginDiscoveryResult;
 }): string[] {
   const channelIds = normalizeChannelIds(params.channelIds);
   if (channelIds.length === 0) {
@@ -509,6 +511,7 @@ export function resolveDiscoverableScopedChannelPluginIds(params: {
   workspaceDir?: string;
   env: NodeJS.ProcessEnv;
   manifestRecords?: readonly PluginManifestRecord[];
+  discovery?: PluginDiscoveryResult;
 }): string[] {
   return resolveScopedChannelOwnerPluginIds(params);
 }
@@ -518,6 +521,7 @@ export function resolveConfiguredChannelPluginIds(params: {
   activationSourceConfig?: OpenClawConfig;
   workspaceDir?: string;
   env: NodeJS.ProcessEnv;
+  discovery?: PluginDiscoveryResult;
 }): string[] {
   const configuredChannelIds = normalizeChannelIds([
     ...listConfiguredChannelIdsForReadOnlyScope({

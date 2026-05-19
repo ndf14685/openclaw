@@ -80,6 +80,7 @@ function shouldForwardChannelScope(params: {
 function resolveScopePluginIds(params: {
   scope: PluginRegistryScope;
   context: ReturnType<typeof resolvePluginRuntimeLoadContext>;
+  discovery: PluginDiscoveryResult;
 }): string[] {
   switch (params.scope) {
     case "configured-channels":
@@ -88,18 +89,21 @@ function resolveScopePluginIds(params: {
         activationSourceConfig: params.context.activationSourceConfig,
         workspaceDir: params.context.workspaceDir,
         env: params.context.env,
+        discovery: params.discovery,
       });
     case "channels":
       return resolveChannelPluginIds({
         config: params.context.config,
         workspaceDir: params.context.workspaceDir,
         env: params.context.env,
+        discovery: params.discovery,
       });
     case "all":
       return resolveEffectivePluginIds({
         config: params.context.rawConfig,
         workspaceDir: params.context.workspaceDir,
         env: params.context.env,
+        discovery: params.discovery,
       });
   }
   const unreachableScope: never = params.scope;
@@ -135,6 +139,10 @@ export function ensurePluginRegistryLoaded(options?: {
   const requestedPluginIdsFromOptions = normalizePluginIdScope(options?.onlyPluginIds);
   const requestedChannelIds = normalizePluginIdScope(options?.onlyChannelIds);
   const context = resolvePluginRuntimeLoadContext(options);
+  const sharedDiscovery = discoverOpenClawPlugins({
+    workspaceDir: context.workspaceDir,
+    env: context.env,
+  });
   const requestedChannelOwnerPluginIds =
     requestedChannelIds === undefined
       ? undefined
@@ -144,6 +152,7 @@ export function ensurePluginRegistryLoaded(options?: {
           channelIds: requestedChannelIds,
           workspaceDir: context.workspaceDir,
           env: context.env,
+          discovery: sharedDiscovery,
         });
   const requestedPluginIds =
     requestedChannelOwnerPluginIds === undefined
@@ -155,7 +164,7 @@ export function ensurePluginRegistryLoaded(options?: {
   const scopedLoad = hasExplicitPluginIdScope(requestedPluginIds);
   const expectedPluginIds = scopedLoad
     ? (requestedPluginIds ?? [])
-    : resolveScopePluginIds({ scope, context });
+    : resolveScopePluginIds({ scope, context, discovery: sharedDiscovery });
   const active = getActivePluginRegistry();
   const requestedPluginIdsForScope = scope === "all" ? expectedPluginIds : undefined;
   if (
@@ -208,15 +217,6 @@ export function ensurePluginRegistryLoaded(options?: {
         : {}),
     },
   );
-  // Compute discovery once at this orchestrator and thread it into the
-  // runtime plugin load so loadOpenClawPlugins doesn't run a redundant
-  // discoverOpenClawPlugins scan. (Note: scope resolvers above still
-  // trigger their own discovery via loadManifestMetadataSnapshot. Threading
-  // discovery through that path is a follow-up; see PR description.)
-  const sharedDiscovery = discoverOpenClawPlugins({
-    workspaceDir: context.workspaceDir,
-    env: context.env,
-  });
   resolveOrLoadRuntimePluginRegistry(loadOptions, sharedDiscovery);
   if (!scopedLoad) {
     pluginRegistryLoaded = scope;
