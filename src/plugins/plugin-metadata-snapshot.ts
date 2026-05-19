@@ -811,6 +811,7 @@ function loadPluginMetadataSnapshotImpl(params: LoadPluginMetadataSnapshotParams
           env: params.env,
           diagnostics: [...index.diagnostics],
           installRecords: index.installRecords,
+          ...(params.discovery ? { discovery: params.discovery } : {}),
         })
       : loadPluginManifestRegistryForInstalledIndex({
           index,

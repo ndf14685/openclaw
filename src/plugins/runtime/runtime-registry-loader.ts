@@ -6,6 +6,7 @@ import {
   resolveConfiguredChannelPluginIds,
   resolveDiscoverableScopedChannelPluginIds,
 } from "../channel-plugin-ids.js";
+import { discoverOpenClawPlugins, type PluginDiscoveryResult } from "../discovery.js";
 import { resolveEffectivePluginIds } from "../effective-plugin-ids.js";
 import { loadOpenClawPlugins } from "../loader.js";
 import {
@@ -107,6 +108,7 @@ function resolveScopePluginIds(params: {
 
 function resolveOrLoadRuntimePluginRegistry(
   loadOptions: NonNullable<Parameters<typeof loadOpenClawPlugins>[0]>,
+  discovery: PluginDiscoveryResult,
 ): void {
   if (
     !getLoadedRuntimePluginRegistry({
@@ -116,7 +118,7 @@ function resolveOrLoadRuntimePluginRegistry(
       requiredPluginIds: loadOptions.onlyPluginIds,
     })
   ) {
-    loadOpenClawPlugins(loadOptions);
+    loadOpenClawPlugins({ ...loadOptions, discovery });
   }
 }
 
@@ -206,7 +208,16 @@ export function ensurePluginRegistryLoaded(options?: {
         : {}),
     },
   );
-  resolveOrLoadRuntimePluginRegistry(loadOptions);
+  // Compute discovery once at this orchestrator and thread it into the
+  // runtime plugin load so loadOpenClawPlugins doesn't run a redundant
+  // discoverOpenClawPlugins scan. (Note: scope resolvers above still
+  // trigger their own discovery via loadManifestMetadataSnapshot. Threading
+  // discovery through that path is a follow-up; see PR description.)
+  const sharedDiscovery = discoverOpenClawPlugins({
+    workspaceDir: context.workspaceDir,
+    env: context.env,
+  });
+  resolveOrLoadRuntimePluginRegistry(loadOptions, sharedDiscovery);
   if (!scopedLoad) {
     pluginRegistryLoaded = scope;
   }
