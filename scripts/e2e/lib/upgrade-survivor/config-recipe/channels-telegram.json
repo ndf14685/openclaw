@@ -1,5 +1,6 @@
 {
   "enabled": true,
+  "responsePrefix": "auto",
   "botToken": {
     "source": "env",
     "provider": "default",
