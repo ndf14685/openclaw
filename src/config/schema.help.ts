@@ -1001,6 +1001,38 @@ export const FIELD_HELP: Record<string, string> = {
     "Maximum characters retained from each loaded daily memory file in the startup prelude (default: 1200).",
   "agents.defaults.startupContext.maxTotalChars":
     "Maximum total characters retained across all loaded daily memory files in the startup prelude (default: 2800). Additional files are truncated from the prelude once this cap is reached.",
+  "agents.defaults.collaborationPolicy":
+    "Hardcoded collaboration policy that steers which agent should research, architect, review, or implement a turn, and records audit entries for dashboard visibility.",
+  "agents.defaults.collaborationPolicy.enabled":
+    "Master toggle for runtime collaboration guidance and audit persistence. When enabled, OpenClaw injects per-turn collaboration instructions instead of relying only on workspace docs.",
+  "agents.defaults.collaborationPolicy.coordinatorAgentId":
+    'Agent expected to coordinate user-facing work and final answers (default: "codex").',
+  "agents.defaults.collaborationPolicy.research":
+    "Research/investigation routing preferences for turns classified as discovery, analysis, or information gathering.",
+  "agents.defaults.collaborationPolicy.research.preferredAgentIds":
+    'Preferred research agents in priority order, such as ["gemini","claude"]. The coordinator is instructed to use these first when the task is classified as research.',
+  "agents.defaults.collaborationPolicy.research.requireConcreteOutput":
+    "When enabled, research prompts explicitly ask for concrete, decision-useful findings instead of shallow summaries.",
+  "agents.defaults.collaborationPolicy.implementation":
+    "Implementation routing preferences for turns classified as coding, fixing, or building work.",
+  "agents.defaults.collaborationPolicy.implementation.delegateAgentId":
+    'Agent that should receive coding work when delegation is feasible, for example "claude".',
+  "agents.defaults.collaborationPolicy.implementation.requireDelegation":
+    "When enabled, the coordinator is explicitly instructed to delegate implementation instead of coding locally by default.",
+  "agents.defaults.collaborationPolicy.architecture":
+    "Architecture/design routing preferences for stack, structure, and system-shape decisions.",
+  "agents.defaults.collaborationPolicy.architecture.ownerAgentId":
+    "Agent that should own architecture and stack choice before any review pass.",
+  "agents.defaults.collaborationPolicy.architecture.reviewAgentId":
+    "Agent that should review the initial architecture before implementation begins.",
+  "agents.defaults.collaborationPolicy.architecture.requireReview":
+    "When enabled, the architecture prompt requires an explicit review step before implementation.",
+  "agents.defaults.collaborationPolicy.audit":
+    "Persistence settings for collaboration decisions shown in the dashboard/debug surfaces.",
+  "agents.defaults.collaborationPolicy.audit.enabled":
+    "Persist recent collaboration decisions to state so the effective behavior is inspectable after the turn finishes.",
+  "agents.defaults.collaborationPolicy.audit.maxEntries":
+    "Maximum retained collaboration audit entries (default: 200). Older records are trimmed from the state file.",
   "agents.defaults.repoRoot":
     "Optional repository root shown in the system prompt runtime line (overrides auto-detect).",
   "agents.defaults.promptOverlays":

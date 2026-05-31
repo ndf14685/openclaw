@@ -103,6 +103,43 @@ export const HeartbeatSchema = z
   })
   .optional();
 
+export const CollaborationPolicySchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    coordinatorAgentId: z.string().optional(),
+    research: z
+      .object({
+        preferredAgentIds: z.array(z.string()).optional(),
+        requireConcreteOutput: z.boolean().optional(),
+      })
+      .strict()
+      .optional(),
+    implementation: z
+      .object({
+        delegateAgentId: z.string().optional(),
+        requireDelegation: z.boolean().optional(),
+      })
+      .strict()
+      .optional(),
+    architecture: z
+      .object({
+        ownerAgentId: z.string().optional(),
+        reviewAgentId: z.string().optional(),
+        requireReview: z.boolean().optional(),
+      })
+      .strict()
+      .optional(),
+    audit: z
+      .object({
+        enabled: z.boolean().optional(),
+        maxEntries: z.number().int().positive().optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict()
+  .optional();
+
 const SandboxDockerSchema = z
   .object({
     image: z.string().optional(),

@@ -32,6 +32,7 @@ import type { AgentCommandOpts, AgentCommandResultMetaOverrides } from "./types.
 type RunResult = Awaited<ReturnType<(typeof import("../pi-embedded.js"))["runEmbeddedPiAgent"]>>;
 
 const NESTED_LOG_PREFIX = "[agent:nested]";
+const OLLAMA_LOCAL_RESPONSE_PREFIX = "Ollama Local Response: ";
 
 function formatNestedLogPrefix(opts: AgentCommandOpts, sessionKey?: string): string {
   const parts = [NESTED_LOG_PREFIX];
@@ -68,6 +69,31 @@ function logNestedOutput(
     }
     runtime.log(`${prefix} ${line}`);
   }
+}
+
+function isOllamaProvider(provider: string | undefined): boolean {
+  const normalized = provider?.trim().toLowerCase();
+  return normalized === "ollama" || normalized?.startsWith("ollama-") === true;
+}
+
+function applyOllamaLocalResponsePrefix(params: {
+  payload: ReplyPayload;
+  provider?: string;
+}): ReplyPayload {
+  if (!isOllamaProvider(params.provider)) {
+    return params.payload;
+  }
+  const text = params.payload.text;
+  if (typeof text !== "string" || text.length === 0) {
+    return params.payload;
+  }
+  if (text.startsWith(OLLAMA_LOCAL_RESPONSE_PREFIX)) {
+    return params.payload;
+  }
+  return {
+    ...params.payload,
+    text: `${OLLAMA_LOCAL_RESPONSE_PREFIX}${text}`,
+  };
 }
 
 function mergeResultMetaOverrides(
@@ -174,7 +200,11 @@ export function normalizeAgentCommandReplyPayloads(params: {
 
   const normalizedPayloads: ReplyPayload[] = [];
   for (const payload of payloads) {
-    const normalized = normalizeReplyPayload(payload as ReplyPayload, {
+    const prefixedPayload = applyOllamaLocalResponsePrefix({
+      payload: payload as ReplyPayload,
+      provider: providerUsed,
+    });
+    const normalized = normalizeReplyPayload(prefixedPayload, {
       responsePrefix: replyPrefix.responsePrefix,
       applyChannelTransforms,
       responsePrefixContext,

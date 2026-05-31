@@ -1,3 +1,4 @@
+import { buildCollaborationPolicyStatus } from "../../auto-reply/reply/collaboration-policy.js";
 import { resolveMainSessionKeyFromConfig } from "../../config/sessions.js";
 import {
   loadOrCreateDeviceIdentity,
@@ -30,6 +31,27 @@ export const systemHandlers: GatewayRequestHandlers = {
   },
   "last-heartbeat": ({ respond }) => {
     respond(true, getLastHeartbeatEvent(), undefined);
+  },
+  "agents.policy.status": async ({ respond, context }) => {
+    const payload = await buildCollaborationPolicyStatus({ cfg: context.getRuntimeConfig() });
+    respond(true, payload, undefined);
+  },
+  "agents.policy.decisions": async ({ params, respond, context }) => {
+    const payload = await buildCollaborationPolicyStatus({ cfg: context.getRuntimeConfig() });
+    const rawLimit =
+      typeof params.limit === "number" && Number.isFinite(params.limit) ? params.limit : 20;
+    const limit = Math.max(1, Math.min(200, Math.floor(rawLimit)));
+    respond(
+      true,
+      {
+        policy: payload.policy,
+        audit: {
+          ...payload.audit,
+          recent: payload.audit.recent.slice(0, limit),
+        },
+      },
+      undefined,
+    );
   },
   "set-heartbeats": ({ params, respond }) => {
     const enabled = params.enabled;

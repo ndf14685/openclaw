@@ -17,6 +17,15 @@ function normalizeSafe(homedir: () => string): string | undefined {
   }
 }
 
+function normalizeOpenClawHome(value: string): string {
+  const resolved = path.resolve(value);
+  const base = path.basename(resolved);
+  if (base === ".openclaw" || base === ".clawdbot") {
+    return path.dirname(resolved);
+  }
+  return resolved;
+}
+
 function resolveRawOsHomeDir(env: NodeJS.ProcessEnv, homedir: () => string): string | undefined {
   return normalize(env.HOME) ?? normalize(env.USERPROFILE) ?? normalizeSafe(homedir);
 }
@@ -30,7 +39,7 @@ function resolveRawHomeDir(env: NodeJS.ProcessEnv, homedir: () => string): strin
     const fallbackHome = resolveRawOsHomeDir(env, homedir);
     return fallbackHome ? explicitHome.replace(/^~(?=$|[\\/])/, fallbackHome) : undefined;
   }
-  return explicitHome;
+  return normalizeOpenClawHome(explicitHome);
 }
 
 export function resolveEffectiveHomeDir(

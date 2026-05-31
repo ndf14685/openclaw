@@ -138,6 +138,16 @@ describe("state + config path candidates", () => {
     expectOpenClawHomeDefaults(env);
   });
 
+  it("accepts OPENCLAW_HOME pointing at the state dir without duplicating .openclaw", () => {
+    const env = {
+      OPENCLAW_HOME: "/srv/openclaw-home/.openclaw",
+    } as NodeJS.ProcessEnv;
+    const stateDir = path.resolve("/srv/openclaw-home/.openclaw");
+
+    expect(resolveStateDir(env)).toBe(stateDir);
+    expect(resolveDefaultConfigCandidates(env)[0]).toBe(path.join(stateDir, "openclaw.json"));
+  });
+
   it("orders default config candidates in a stable order", () => {
     const home = "/home/test";
     const resolvedHome = path.resolve(home);

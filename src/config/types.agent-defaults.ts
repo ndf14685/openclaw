@@ -81,6 +81,43 @@ export type AgentStartupContextConfig = {
   maxTotalChars?: number;
 };
 
+export type AgentCollaborationPolicyConfig = {
+  /** Enable runtime-enforced collaboration guidance and audit records. */
+  enabled?: boolean;
+  /** Agent expected to coordinate user-facing work (default: "codex"). */
+  coordinatorAgentId?: string;
+  /** Research/investigation routing preferences. */
+  research?: {
+    /** Preferred agents in priority order for research passes. */
+    preferredAgentIds?: string[];
+    /** Require the answer to aim for concrete, decision-useful output. */
+    requireConcreteOutput?: boolean;
+  };
+  /** Implementation routing preferences. */
+  implementation?: {
+    /** Agent that should receive coding/development work when delegation is feasible. */
+    delegateAgentId?: string;
+    /** When true, the coordinator should explicitly delegate coding work. */
+    requireDelegation?: boolean;
+  };
+  /** Architecture/design routing preferences. */
+  architecture?: {
+    /** Agent that owns architecture/stack choice (default: coordinator). */
+    ownerAgentId?: string;
+    /** Agent that should review the initial architecture before implementation. */
+    reviewAgentId?: string;
+    /** If true, require an explicit review pass before implementation. */
+    requireReview?: boolean;
+  };
+  /** Decision audit persistence for dashboard visibility. */
+  audit?: {
+    /** Persist recent collaboration decisions to state. */
+    enabled?: boolean;
+    /** Max retained audit entries (default: 200). */
+    maxEntries?: number;
+  };
+};
+
 export type AgentContextLimitsConfig = {
   /** Default max chars returned by memory_get before truncation metadata/notice (default: 12000). */
   memoryGetMaxChars?: number;
@@ -270,6 +307,8 @@ export type AgentDefaultsConfig = {
   userTimezone?: string;
   /** Runtime-owned first-turn startup context for bare /new and /reset. */
   startupContext?: AgentStartupContextConfig;
+  /** Hardcoded collaboration behavior between coordinator and specialist agents. */
+  collaborationPolicy?: AgentCollaborationPolicyConfig;
   /** Focused context-budget overrides for high-volume injected/read surfaces. */
   contextLimits?: AgentContextLimitsConfig;
   /** Time format in system prompt: auto (OS preference), 12-hour, or 24-hour. */

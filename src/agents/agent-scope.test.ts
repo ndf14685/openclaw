@@ -596,6 +596,15 @@ describe("resolveAgentConfig", () => {
     expect(agentDir).toBe(path.join(path.resolve(home), ".openclaw", "agents", "main", "agent"));
   });
 
+  it("does not duplicate .openclaw when OPENCLAW_HOME points at the state dir", () => {
+    const home = path.join(path.sep, "srv", "openclaw-home");
+    vi.stubEnv("OPENCLAW_HOME", path.join(home, ".openclaw"));
+    vi.stubEnv("OPENCLAW_STATE_DIR", "");
+
+    const agentDir = resolveAgentDir({} as OpenClawConfig, "main");
+    expect(agentDir).toBe(path.join(path.resolve(home), ".openclaw", "agents", "main", "agent"));
+  });
+
   it("resolves default agentDir from the configured default agent", () => {
     const stateDir = path.join(path.sep, "tmp", "test-state");
     vi.stubEnv("OPENCLAW_STATE_DIR", stateDir);

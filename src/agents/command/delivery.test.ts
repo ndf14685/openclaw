@@ -150,6 +150,32 @@ describe("normalizeAgentCommandReplyPayloads", () => {
     ]);
   });
 
+  it("marks Ollama replies before channel delivery", () => {
+    const normalized = normalizeAgentCommandReplyPayloads({
+      cfg: {} as OpenClawConfig,
+      opts: { message: "test" } as AgentCommandOpts,
+      outboundSession: undefined,
+      deliveryChannel: "slack",
+      payloads: [{ text: "Ready." }],
+      result: createResult({
+        meta: {
+          durationMs: 1,
+          agentMeta: {
+            sessionId: "session-1",
+            provider: "ollama-pc",
+            model: "gpt-oss:120b",
+          },
+        },
+      }),
+    });
+
+    expect(normalized).toMatchObject([
+      {
+        text: "Ollama Local Response: Ready.",
+      },
+    ]);
+  });
+
   it("keeps Slack options text intact for local preview when delivery is disabled", async () => {
     const runtime = {
       log: vi.fn(),

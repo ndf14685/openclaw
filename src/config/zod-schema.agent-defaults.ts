@@ -8,6 +8,7 @@ import {
   AgentRuntimePolicySchema,
   AgentModelSchema,
   MemorySearchSchema,
+  CollaborationPolicySchema,
 } from "./zod-schema.agent-runtime.js";
 import {
   BlockStreamingChunkSchema,
@@ -128,6 +129,7 @@ export const AgentDefaultsSchema = z
       })
       .strict()
       .optional(),
+    collaborationPolicy: CollaborationPolicySchema,
     contextLimits: AgentContextLimitsSchema,
     timeFormat: z.union([z.literal("auto"), z.literal("12"), z.literal("24")]).optional(),
     envelopeTimezone: z.string().optional(),

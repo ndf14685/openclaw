@@ -48,6 +48,7 @@ import {
 import { SILENT_REPLY_TOKEN } from "../tokens.js";
 import type { GetReplyOptions, ReplyPayload } from "../types.js";
 import { applySessionHints } from "./body.js";
+import { buildCollaborationPolicyTurnPrompt } from "./collaboration-policy.js";
 import type { buildCommandContext } from "./commands.js";
 import type { InlineDirectives } from "./directive-handling.js";
 import { isSystemEventProvider } from "./effective-reply-route.js";
@@ -67,6 +68,10 @@ import { buildReplyPromptBodies } from "./prompt-prelude.js";
 import { resolveActiveRunQueueAction } from "./queue-policy.js";
 import { resolveQueueSettings } from "./queue/settings-runtime.js";
 import { isSteeringQueueMode } from "./queue/steering.js";
+import {
+  buildTelegramRouterSystemPrompt,
+  resolveTelegramRouterDecision,
+} from "./router-decision.js";
 import { resolveRuntimePolicySessionKey } from "./runtime-policy-session-key.js";
 import { resolveBareSessionResetPromptState } from "./session-reset-prompt.js";
 import { resolveBareResetBootstrapFileAccess } from "./session-reset-prompt.js";
@@ -531,8 +536,20 @@ export async function runPreparedReply(
     isNewSession ? sessionCtx : { ...sessionCtx, ThreadStarterBody: undefined },
     { includeFormattingHints: !useFastReplyRuntime },
   );
+  const telegramRouterDecision = resolveTelegramRouterDecision(promptSessionCtx);
+  const telegramRouterPrompt = telegramRouterDecision
+    ? buildTelegramRouterSystemPrompt(telegramRouterDecision)
+    : "";
+  const collaborationPolicy = await buildCollaborationPolicyTurnPrompt({
+    cfg,
+    agentId,
+    sessionKey,
+    body: ctx.CommandBody ?? sessionCtx.BodyStripped ?? sessionCtx.Body ?? "",
+  });
   const extraSystemPromptParts = [
     inboundMetaPrompt,
+    telegramRouterPrompt,
+    collaborationPolicy.prompt,
     directChatContext,
     groupChatContext,
     groupIntro,

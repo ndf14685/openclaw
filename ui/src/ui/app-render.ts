@@ -2554,6 +2554,8 @@ export function renderApp(state: AppViewState) {
                 health: state.debugHealth,
                 models: state.debugModels,
                 heartbeat: state.debugHeartbeat,
+                policyStatus: state.debugPolicyStatus,
+                policyDecisions: state.debugPolicyDecisions,
                 eventLog: state.eventLog,
                 methods: (state.hello?.features?.methods ?? []).toSorted(),
                 callMethod: state.debugCallMethod,

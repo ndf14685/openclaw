@@ -80,6 +80,8 @@ const BASE_METHODS = [
   "environments.list",
   "environments.status",
   "agents.list",
+  "agents.policy.status",
+  "agents.policy.decisions",
   "agents.create",
   "agents.update",
   "agents.delete",

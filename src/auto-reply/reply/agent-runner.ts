@@ -1361,7 +1361,19 @@ export async function runReplyAgent(params: {
       }
     }
 
-    const payloadArray = runResult.payloads ?? [];
+    const isHookBlockedRun = runResult.meta?.error?.kind === "hook_block";
+    let payloadArray = runResult.payloads ?? [];
+    if (payloadArray.length === 0 && !isHookBlockedRun) {
+      const fallbackText = (
+        runResult.meta?.finalAssistantVisibleText ?? runResult.meta?.finalAssistantRawText
+      )?.trim();
+      if (fallbackText && fallbackText !== SILENT_REPLY_TOKEN) {
+        logVerbose(
+          `Recovered visible assistant reply from final assistant text for session ${sessionKey} (${runResult.meta?.agentMeta?.provider ?? "unknown"} / ${runResult.meta?.agentMeta?.model ?? "unknown"})`,
+        );
+        payloadArray = [{ text: fallbackText }];
+      }
+    }
 
     if (blockReplyPipeline) {
       await blockReplyPipeline.flush({ force: true });
@@ -1729,7 +1741,6 @@ export async function runReplyAgent(params: {
       }
     }
     const prefixPayloads = [...verboseNotices];
-    const isHookBlockedRun = runResult.meta?.error?.kind === "hook_block";
     const rawUserText = isHookBlockedRun
       ? runResult.meta?.finalPromptText
       : (runResult.meta?.finalPromptText ??

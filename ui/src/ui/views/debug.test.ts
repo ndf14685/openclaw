@@ -9,6 +9,8 @@ function createProps(overrides: Partial<DebugProps> = {}): DebugProps {
     loading: false,
     status: null,
     health: null,
+    policyStatus: null,
+    policyDecisions: null,
     models: [],
     heartbeat: null,
     eventLog: [],

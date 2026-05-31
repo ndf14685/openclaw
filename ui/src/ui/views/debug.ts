@@ -9,6 +9,8 @@ export type DebugProps = {
   health: Record<string, unknown> | null;
   models: unknown[];
   heartbeat: unknown;
+  policyStatus: unknown;
+  policyDecisions: unknown;
   eventLog: EventLogEntry[];
   methods: string[];
   callMethod: string;
@@ -20,6 +22,18 @@ export type DebugProps = {
   onRefresh: () => void;
   onCall: () => void;
 };
+
+function renderJsonCard(title: string, subtitle: string, value: unknown) {
+  return html`
+    <section class="card" style="margin-top: 18px;">
+      <div class="card-title">${title}</div>
+      <div class="card-sub">${subtitle}</div>
+      <pre class="code-block" style="margin-top: 12px;">
+${JSON.stringify(value ?? {}, null, 2)}</pre
+      >
+    </section>
+  `;
+}
 
 export function renderDebug(props: DebugProps) {
   const securityAudit =
@@ -123,6 +137,17 @@ export function renderDebug(props: DebugProps) {
 ${JSON.stringify(props.models ?? [], null, 2)}</pre
       >
     </section>
+
+    ${renderJsonCard(
+      "Agent collaboration policy",
+      "Effective hardcoded policy and audit summary used for runtime delegation behavior.",
+      props.policyStatus,
+    )}
+    ${renderJsonCard(
+      "Recent collaboration decisions",
+      "Latest classified turns recorded for audit and monitoring.",
+      props.policyDecisions,
+    )}
 
     <section class="card" style="margin-top: 18px;">
       <div class="card-title">${t("debug.eventLogTitle")}</div>
