@@ -382,6 +382,25 @@ function talkLabels(evt: Extract<DiagnosticEventPayload, { type: "talk.event" }>
   };
 }
 
+function webhookLabels(
+  evt: Extract<
+    DiagnosticEventPayload,
+    { type: "webhook.received" | "webhook.processed" | "webhook.error" }
+  >,
+): LabelSet {
+  return {
+    channel: lowCardinalityLabel(evt.channel),
+    update_type: lowCardinalityLabel(evt.updateType),
+  };
+}
+
+function messageQueuedLabels(evt: Extract<DiagnosticEventPayload, { type: "message.queued" }>) {
+  return {
+    channel: lowCardinalityLabel(evt.channel),
+    source: lowCardinalityLabel(evt.source),
+  };
+}
+
 function recordModelUsage(
   store: PrometheusMetricStore,
   evt: Extract<DiagnosticEventPayload, { type: "model.usage" }>,
@@ -455,6 +474,45 @@ function recordDiagnosticEvent(
   switch (evt.type) {
     case "model.usage":
       recordModelUsage(store, evt);
+      return;
+    case "webhook.received":
+      store.counter(
+        "openclaw_webhook_received_total",
+        "Inbound webhooks received by channel and update type.",
+        webhookLabels(evt),
+      );
+      return;
+    case "webhook.processed":
+      store.counter(
+        "openclaw_webhook_processed_total",
+        "Inbound webhooks processed by channel and update type.",
+        webhookLabels(evt),
+      );
+      store.histogram(
+        "openclaw_webhook_processed_duration_seconds",
+        "Inbound webhook processing duration in seconds.",
+        webhookLabels(evt),
+        seconds(evt.durationMs),
+      );
+      return;
+    case "webhook.error":
+      store.counter("openclaw_webhook_error_total", "Inbound webhook errors by category.", {
+        ...webhookLabels(evt),
+        error_category: lowCardinalityLabel(evt.error, "other"),
+      });
+      return;
+    case "message.queued":
+      store.counter(
+        "openclaw_message_queued_total",
+        "Inbound messages queued by channel and source.",
+        messageQueuedLabels(evt),
+      );
+      store.gauge(
+        "openclaw_message_queue_depth",
+        "Latest observed inbound message queue depth.",
+        messageQueuedLabels(evt),
+        numericValue(evt.queueDepth),
+      );
       return;
     case "run.completed":
       store.histogram(

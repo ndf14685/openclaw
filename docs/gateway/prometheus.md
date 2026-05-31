@@ -89,6 +89,12 @@ For traces, logs, OTLP push, and OpenTelemetry GenAI semantic attributes, see [O
 
 | Metric                                        | Type      | Labels                                                                                    |
 | --------------------------------------------- | --------- | ----------------------------------------------------------------------------------------- |
+| `openclaw_webhook_received_total`             | counter   | `channel`, `update_type`                                                                  |
+| `openclaw_webhook_processed_total`            | counter   | `channel`, `update_type`                                                                  |
+| `openclaw_webhook_processed_duration_seconds` | histogram | `channel`, `update_type`                                                                  |
+| `openclaw_webhook_error_total`                | counter   | `channel`, `error_category`, `update_type`                                                |
+| `openclaw_message_queued_total`               | counter   | `channel`, `source`                                                                       |
+| `openclaw_message_queue_depth`                | gauge     | `channel`, `source`                                                                       |
 | `openclaw_run_completed_total`                | counter   | `channel`, `model`, `outcome`, `provider`, `trigger`                                      |
 | `openclaw_run_duration_seconds`               | histogram | `channel`, `model`, `outcome`, `provider`, `trigger`                                      |
 | `openclaw_model_call_total`                   | counter   | `api`, `error_category`, `model`, `outcome`, `provider`, `transport`                      |

@@ -125,6 +125,19 @@ describe("diagnostics-prometheus service", () => {
       store,
       {
         ...baseEvent(),
+        type: "message.queued",
+        channel: "telegram",
+        source: "topic-message",
+        queueDepth: 3,
+        sessionKey: "session-should-not-export",
+        sessionId: "session-id-should-not-export",
+      },
+      trusted,
+    );
+    __test__.recordDiagnosticEvent(
+      store,
+      {
+        ...baseEvent(),
         type: "message.delivery.started",
         channel: "matrix",
         deliveryKind: "text",
@@ -162,6 +175,12 @@ describe("diagnostics-prometheus service", () => {
     const rendered = __test__.renderPrometheusMetrics(store);
 
     expect(rendered).toContain(
+      'openclaw_message_queued_total{channel="telegram",source="topic-message"} 1',
+    );
+    expect(rendered).toContain(
+      'openclaw_message_queue_depth{channel="telegram",source="topic-message"} 3',
+    );
+    expect(rendered).toContain(
       'openclaw_message_delivery_started_total{channel="matrix",delivery_kind="text"} 1',
     );
     expect(rendered).toContain(
@@ -173,7 +192,65 @@ describe("diagnostics-prometheus service", () => {
     expect(rendered).not.toContain("chat-should-not-export");
     expect(rendered).not.toContain("message-should-not-export");
     expect(rendered).not.toContain("session-should-not-export");
+    expect(rendered).not.toContain("session-id-should-not-export");
     expect(rendered).not.toContain("progress draft");
+  });
+
+  it("records webhook ingress metrics without exporting raw chat ids", () => {
+    const store = __test__.createPrometheusMetricStore();
+
+    __test__.recordDiagnosticEvent(
+      store,
+      {
+        ...baseEvent(),
+        type: "webhook.received",
+        channel: "telegram",
+        updateType: "message",
+        chatId: "chat-should-not-export",
+      },
+      trusted,
+    );
+    __test__.recordDiagnosticEvent(
+      store,
+      {
+        ...baseEvent(),
+        type: "webhook.processed",
+        channel: "telegram",
+        updateType: "message",
+        chatId: "chat-should-not-export",
+        durationMs: 75,
+      },
+      trusted,
+    );
+    __test__.recordDiagnosticEvent(
+      store,
+      {
+        ...baseEvent(),
+        type: "webhook.error",
+        channel: "telegram/custom",
+        updateType: "callback query",
+        chatId: "chat-should-not-export",
+        error: "Bearer sk-secret-token-value",
+      },
+      trusted,
+    );
+
+    const rendered = __test__.renderPrometheusMetrics(store);
+
+    expect(rendered).toContain(
+      'openclaw_webhook_received_total{channel="telegram",update_type="message"} 1',
+    );
+    expect(rendered).toContain(
+      'openclaw_webhook_processed_total{channel="telegram",update_type="message"} 1',
+    );
+    expect(rendered).toContain(
+      'openclaw_webhook_processed_duration_seconds_sum{channel="telegram",update_type="message"} 0.075',
+    );
+    expect(rendered).toContain(
+      'openclaw_webhook_error_total{channel="unknown",error_category="other",update_type="unknown"} 1',
+    );
+    expect(rendered).not.toContain("chat-should-not-export");
+    expect(rendered).not.toContain("sk-secret");
   });
 
   it("records session recovery and talk metrics without exporting raw ids or content", () => {
