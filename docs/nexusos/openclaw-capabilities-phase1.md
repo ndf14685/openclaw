@@ -20,6 +20,8 @@ La frontera esperada es:
 
 ## Ajuste de diseno: capabilities extensibles
 
+Decision arquitectonica: [ADR-0001: Capability Governance and Intent Resolution](../adr/ADR-0001-capability-governance-and-intent-resolution.md).
+
 OpenClaw no debe modelar una jaula de capabilities permitidas por topico, proyecto o canal. En particular, no debe introducir `allowed_capabilities` como lista cerrada que bloquee capacidades nuevas por proyecto.
 
 Las capabilities son funcionales, dinamicas y emergentes. Un topico/proyecto puede aportar contexto de resolucion, pero no debe limitar el crecimiento del catalogo.
@@ -40,7 +42,7 @@ La resolucion conceptual de capability debe considerar, en orden:
 
 1. capability explicita
 2. intencion inferida
-3. propuesta del architect
+3. capability proposal pendiente
 4. default del topico/proyecto
 5. default global
 
@@ -214,7 +216,7 @@ El comando solo lee el archivo indicado por `--config` y usa el catalogo de mode
 - Todavia no hay gobernanza avanzada.
 - Todavia no hay definicion final de como OpenClaw consumira capabilities externas sin acoplarse al producto Backstage.
 - Todavia no hay mecanismo persistente de `capability proposals`.
-- Todavia no hay resolucion por intencion inferida ni propuesta del architect.
+- Todavia no hay resolucion por intencion inferida ni `capability proposal` pendiente.
 
 ## Criterio para Fase 2
 
