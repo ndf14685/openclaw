@@ -299,6 +299,7 @@ describe("capability cli", () => {
     mocks.runtime.log.mockClear();
     mocks.runtime.error.mockClear();
     mocks.runtime.writeJson.mockClear();
+    mocks.loadConfig.mockClear().mockReturnValue({});
     mocks.loadModelCatalog
       .mockReset()
       .mockResolvedValue([{ id: "gpt-5.4", provider: "openai", name: "GPT-5.4" }] as never);
@@ -383,6 +384,83 @@ describe("capability cli", () => {
     const payload = mocks.runtime.writeJson.mock.calls[0]?.[0] as Array<{ id: string }>;
     expect(payload.some((entry) => entry.id === "model.run")).toBe(true);
     expect(payload.some((entry) => entry.id === "image.describe")).toBe(true);
+  });
+
+  it("dry-runs sample capability bindings without loading the active runtime config", async () => {
+    const samplePath = path.resolve("docs/examples/openclaw.capabilities.sample.json");
+    const cases = [
+      {
+        capability: "architect",
+        provider: "claude-cli",
+        model: "claude-sonnet-4-6",
+      },
+      {
+        capability: "implementer",
+        provider: "codex-cli",
+        model: "gpt-5.5",
+      },
+      {
+        capability: "reviewer",
+        provider: "claude-cli",
+        model: "claude-sonnet-4-6",
+      },
+    ];
+
+    for (const testCase of cases) {
+      mocks.runtime.writeJson.mockClear();
+      await runRegisteredCli({
+        register: registerCapabilityCli as (program: Command) => void,
+        argv: [
+          "capability",
+          "resolver",
+          "dry-run",
+          "--config",
+          samplePath,
+          "--capability",
+          testCase.capability,
+          "--json",
+        ],
+      });
+
+      expect(mocks.runtime.writeJson).toHaveBeenCalledWith(
+        expect.objectContaining({
+          ok: true,
+          inputCapability: testCase.capability,
+          provider: testCase.provider,
+          model: testCase.model,
+          fallbackApplied: false,
+        }),
+      );
+    }
+    expect(mocks.loadConfig).not.toHaveBeenCalled();
+  });
+
+  it("prints resolver dry-run fields in text mode", async () => {
+    const samplePath = path.resolve("docs/examples/openclaw.capabilities.sample.json");
+
+    await runRegisteredCli({
+      register: registerCapabilityCli as (program: Command) => void,
+      argv: [
+        "capability",
+        "resolver",
+        "dry-run",
+        "--config",
+        samplePath,
+        "--capability",
+        "implementer",
+      ],
+    });
+
+    expect(mocks.runtime.log).toHaveBeenCalledWith(
+      [
+        "capability resolver dry-run",
+        "input capability: implementer",
+        "binding resolved: codex-cli/gpt-5.5",
+        "provider/model final: codex-cli/gpt-5.5",
+        "fallback applied: no",
+        "reason: binding de capability resuelto porque capabilities_enabled === true",
+      ].join("\n"),
+    );
   });
 
   it("defaults model run to local transport", async () => {

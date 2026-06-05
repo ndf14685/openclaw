@@ -11,9 +11,26 @@ import {
 describe("command-startup-policy", () => {
   it("matches config guard bypass commands", () => {
     expect(shouldBypassConfigGuardForCommandPath(["backup", "create"])).toBe(true);
+    expect(shouldBypassConfigGuardForCommandPath(["capability", "resolver"])).toBe(true);
+    expect(shouldBypassConfigGuardForCommandPath(["infer", "resolver"])).toBe(true);
     expect(shouldBypassConfigGuardForCommandPath(["config", "validate"])).toBe(true);
     expect(shouldBypassConfigGuardForCommandPath(["config", "schema"])).toBe(true);
     expect(shouldBypassConfigGuardForCommandPath(["status"])).toBe(false);
+  });
+
+  it("keeps capability resolver dry-run isolated from normal CLI startup dependencies", () => {
+    expect(shouldEnsureCliPathForCommandPath(["capability", "resolver"])).toBe(false);
+    expect(
+      resolveCliStartupPolicy({
+        commandPath: ["capability", "resolver"],
+        jsonOutputMode: true,
+      }),
+    ).toEqual(
+      expect.objectContaining({
+        loadPlugins: false,
+        pluginRegistry: { scope: "all" },
+      }),
+    );
   });
 
   it("matches route-first config guard skip policy", () => {
@@ -53,6 +70,12 @@ describe("command-startup-policy", () => {
     expect(
       shouldLoadPluginsForCommandPath({
         commandPath: ["health"],
+        jsonOutputMode: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldLoadPluginsForCommandPath({
+        commandPath: ["capability", "resolver"],
         jsonOutputMode: false,
       }),
     ).toBe(false);

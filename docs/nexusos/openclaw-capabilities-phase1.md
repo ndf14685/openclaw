@@ -89,6 +89,58 @@ Dentro del paso de capability binding, Fase 1 puede recibir la capability desde 
 - 128 tests efectivos pasaron.
 - `pnpm tsgo:core` paso.
 
+## Fase 1.5: validacion controlada
+
+Fase 1.5 valida el resolver con una config de ejemplo, sin activar capabilities en la config real, sin tocar Telegram, sin callbacks, sin milestones y sin reiniciar gateway.
+
+Fixture:
+
+- `docs/examples/openclaw.capabilities.sample.json`
+
+Bindings esperados:
+
+- `architect` -> `claude-cli/claude-sonnet-4-6`
+- `implementer` -> `codex-cli/gpt-5.5`
+- `reviewer` -> `claude-cli/claude-sonnet-4-6`
+
+Comando dry-run:
+
+```bash
+pnpm openclaw capability resolver dry-run \
+  --config docs/examples/openclaw.capabilities.sample.json \
+  --capability architect
+```
+
+Salida de ejemplo:
+
+```text
+capability resolver dry-run
+input capability: architect
+binding resolved: claude-cli/claude-sonnet-4-6
+provider/model final: claude-cli/claude-sonnet-4-6
+fallback applied: no
+reason: binding de capability resuelto porque capabilities_enabled === true
+```
+
+Salida JSON:
+
+```bash
+pnpm openclaw capability resolver dry-run \
+  --config docs/examples/openclaw.capabilities.sample.json \
+  --capability implementer \
+  --json
+```
+
+El dry-run muestra:
+
+- input capability
+- binding resuelto
+- provider/model final
+- fallback aplicado o no
+- motivo de resolucion
+
+El comando solo lee el archivo indicado por `--config` y usa el catalogo de modelos en modo read-only. No ejecuta modelos, no abre Gateway, no escribe config, no modifica sesiones y no toca Telegram.
+
 ## Riesgos conocidos
 
 - Todavia no hay discovery desde Backstage.

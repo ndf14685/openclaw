@@ -1,6 +1,10 @@
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { CronJob } from "../types.js";
 import {
+  normalizeCapabilityName,
+  resolveCapabilityModelBinding,
+} from "./capability-model-binding.js";
+import {
   DEFAULT_MODEL,
   DEFAULT_PROVIDER,
   getModelRefStatus,
@@ -49,37 +53,6 @@ function formatCronPayloadModelRejection(modelOverride: string, error: string): 
     return `cron payload.model '${modelOverride}' rejected by agents.defaults.models allowlist: ${modelRef}`;
   }
   return `cron payload.model '${modelOverride}' rejected: ${error}`;
-}
-
-function normalizeCapabilityName(value: unknown): string | undefined {
-  if (typeof value !== "string") {
-    return undefined;
-  }
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
-}
-
-function resolveCapabilityModelBinding(params: {
-  cfg: OpenClawConfig;
-  capability: string;
-}): string | undefined {
-  if (params.cfg.capabilities_enabled !== true) {
-    return undefined;
-  }
-  const binding = params.cfg.capabilities?.bindings?.[params.capability];
-  if (typeof binding === "string") {
-    const trimmed = binding.trim();
-    return trimmed.length > 0 ? trimmed : undefined;
-  }
-  if (!binding || typeof binding !== "object") {
-    return undefined;
-  }
-  const model = typeof binding.model === "string" ? binding.model.trim() : "";
-  if (!model) {
-    return undefined;
-  }
-  const provider = typeof binding.provider === "string" ? binding.provider.trim() : "";
-  return provider && !model.includes("/") ? `${provider}/${model}` : model;
 }
 
 async function applyCapabilitySelection(params: {

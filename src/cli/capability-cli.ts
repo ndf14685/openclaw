@@ -10,8 +10,10 @@ import {
   loadAuthProfileStoreForRuntime,
 } from "../agents/auth-profiles.js";
 import { updateAuthProfileStoreWithLock } from "../agents/auth-profiles/store.js";
+import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "../agents/defaults.js";
 import { resolveMemorySearchConfig } from "../agents/memory-search.js";
 import { loadModelCatalog } from "../agents/model-catalog.js";
+import { resolveConfiguredModelRef } from "../agents/model-selection-resolve.js";
 import {
   completeWithPreparedSimpleCompletionModel,
   prepareSimpleCompletionModelForAgent,
@@ -19,6 +21,7 @@ import {
 import { getRuntimeConfig } from "../config/config.js";
 import { resolveAgentModelPrimaryValue } from "../config/model-input.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { explainCapabilityModelBinding } from "../cron/isolated-agent/capability-model-binding.js";
 import { callGateway, randomIdempotencyKey } from "../gateway/call.js";
 import { buildGatewayConnectionDetailsWithResolvers } from "../gateway/connection-details.js";
 import { isLoopbackHost } from "../gateway/net.js";
@@ -451,6 +454,38 @@ function providerSummaryText(value: unknown): string {
   return providers.map((entry) => JSON.stringify(entry)).join("\n");
 }
 
+function formatCapabilityResolverDryRunText(value: unknown): string {
+  const result = value as {
+    ok: boolean;
+    inputCapability: string;
+    binding?: string;
+    bindingResolved?: string;
+    provider?: string;
+    model?: string;
+    fallbackApplied: boolean;
+    reason: string;
+  };
+  return [
+    "capability resolver dry-run",
+    `input capability: ${result.inputCapability || "(empty)"}`,
+    `binding resolved: ${result.bindingResolved ?? result.binding ?? "(none)"}`,
+    `provider/model final: ${
+      result.provider && result.model ? `${result.provider}/${result.model}` : "(not resolved)"
+    }`,
+    `fallback applied: ${result.fallbackApplied ? "yes" : "no"}`,
+    `reason: ${result.reason}`,
+  ].join("\n");
+}
+
+async function loadConfigForCapabilityResolverDryRun(configPath: string | undefined) {
+  if (!configPath) {
+    return getRuntimeConfig();
+  }
+  const absolutePath = path.resolve(configPath);
+  const raw = await fs.readFile(absolutePath, "utf8");
+  return JSON.parse(raw) as OpenClawConfig;
+}
+
 function hasOwnKeys(value: unknown): boolean {
   return Boolean(
     value && typeof value === "object" && Object.keys(value as Record<string, unknown>).length > 0,
@@ -829,6 +864,23 @@ async function buildModelProviders() {
     grouped.set(entry.provider, current);
   }
   return [...grouped.values()].toSorted((a, b) => a.provider.localeCompare(b.provider));
+}
+
+async function runCapabilityResolverDryRun(params: { capability: string; configPath?: string }) {
+  const cfg = await loadConfigForCapabilityResolverDryRun(params.configPath);
+  const resolvedDefault = resolveConfiguredModelRef({
+    cfg,
+    defaultProvider: DEFAULT_PROVIDER,
+    defaultModel: DEFAULT_MODEL,
+  });
+  const catalog = await loadModelCatalog({ config: cfg, readOnly: true });
+  return explainCapabilityModelBinding({
+    cfg,
+    cfgWithAgentDefaults: cfg,
+    catalog,
+    capability: params.capability,
+    resolvedDefault,
+  });
 }
 
 async function runModelAuthStatus() {
@@ -1619,6 +1671,29 @@ export function registerCapabilityCli(program: Command) {
     );
 
   registerCapabilityListAndInspect(capability);
+
+  const resolver = capability.command("resolver").description("Capability model resolver helpers");
+
+  resolver
+    .command("dry-run")
+    .description("Resolve a capability binding without running a model or touching Gateway")
+    .requiredOption("--capability <name>", "Capability binding name")
+    .option("--config <path>", "Config file to read instead of the active runtime config")
+    .option("--json", "Output JSON", false)
+    .action(async (opts) => {
+      await runCommandWithRuntime(defaultRuntime, async () => {
+        const result = await runCapabilityResolverDryRun({
+          capability: String(opts.capability),
+          configPath: opts.config as string | undefined,
+        });
+        emitJsonOrText(
+          defaultRuntime,
+          Boolean(opts.json),
+          result,
+          formatCapabilityResolverDryRunText,
+        );
+      });
+    });
 
   const model = capability
     .command("model")

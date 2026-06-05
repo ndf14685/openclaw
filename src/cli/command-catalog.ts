@@ -249,6 +249,24 @@ export const cliCommandCatalog: readonly CliCommandCatalogEntry[] = [
     commandPath: ["tools"],
     policy: { loadPlugins: "never", ensureCliPath: false, networkProxy: "bypass" },
   },
+  {
+    commandPath: ["infer", "resolver"],
+    policy: {
+      bypassConfigGuard: true,
+      loadPlugins: "never",
+      ensureCliPath: false,
+      networkProxy: "bypass",
+    },
+  },
+  {
+    commandPath: ["capability", "resolver"],
+    policy: {
+      bypassConfigGuard: true,
+      loadPlugins: "never",
+      ensureCliPath: false,
+      networkProxy: "bypass",
+    },
+  },
   { commandPath: ["acp"], policy: { networkProxy: "bypass" } },
   { commandPath: ["approvals"], policy: { networkProxy: "bypass" } },
   { commandPath: ["backup"], policy: { bypassConfigGuard: true, networkProxy: "bypass" } },

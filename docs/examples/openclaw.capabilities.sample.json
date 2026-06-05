@@ -1,0 +1,29 @@
+{
+  "$schema": "../schema/openclaw.schema.json",
+  "capabilities_enabled": true,
+  "agents": {
+    "defaults": {
+      "model": {
+        "primary": "openai/gpt-5.5"
+      },
+      "models": {
+        "openai/gpt-5.5": {},
+        "claude-cli/claude-sonnet-4-6": {},
+        "codex-cli/gpt-5.5": {}
+      }
+    }
+  },
+  "capabilities": {
+    "bindings": {
+      "architect": "claude-cli/claude-sonnet-4-6",
+      "implementer": {
+        "provider": "codex-cli",
+        "model": "gpt-5.5"
+      },
+      "reviewer": {
+        "provider": "claude-cli",
+        "model": "claude-sonnet-4-6"
+      }
+    }
+  }
+}
