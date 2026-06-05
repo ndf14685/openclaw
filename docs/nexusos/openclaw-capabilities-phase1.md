@@ -18,6 +18,70 @@ La frontera esperada es:
 - OpenClaw implementa un adapter de ejecucion que puede leer una capability ya resuelta.
 - Backstage, si se usa, debe ser una fuente posible de metadata/catalogo, no el contrato al que OpenClaw queda acoplado.
 
+## Ajuste de diseno: capabilities extensibles
+
+OpenClaw no debe modelar una jaula de capabilities permitidas por topico, proyecto o canal. En particular, no debe introducir `allowed_capabilities` como lista cerrada que bloquee capacidades nuevas por proyecto.
+
+Las capabilities son funcionales, dinamicas y emergentes. Un topico/proyecto puede aportar contexto de resolucion, pero no debe limitar el crecimiento del catalogo.
+
+Un topico/proyecto puede tener:
+
+- contexto operacional o semantico
+- `default_capability` opcional
+- provider binding overrides opcionales
+
+Un topico/proyecto no debe tener:
+
+- una lista cerrada de capabilities permitidas
+- una restriccion que impida proponer capabilities nuevas
+- activacion silenciosa de capabilities inexistentes
+
+La resolucion conceptual de capability debe considerar, en orden:
+
+1. capability explicita
+2. intencion inferida
+3. propuesta del architect
+4. default del topico/proyecto
+5. default global
+
+Si una capability solicitada, inferida o propuesta no existe, OpenClaw debe crear una propuesta en estado `draft` o `proposed`, no registrarla ni activarla automaticamente.
+
+La propuesta debe documentar:
+
+- `capability`
+- `purpose`
+- `inputs`
+- `outputs`
+- `restrictions`
+- `suggested_provider_binding`
+- `risks`
+- `status`
+
+Ejemplo:
+
+```json
+{
+  "capability": "release-manager",
+  "purpose": "preparar releases, changelog, versionado y rollback",
+  "inputs": ["commits", "pull requests", "version policy", "release notes"],
+  "outputs": ["release plan", "changelog draft", "rollback plan"],
+  "restrictions": ["no publicar releases sin aprobacion humana"],
+  "suggested_provider_binding": "claude-cli",
+  "risks": ["versionado incorrecto", "omitir cambios relevantes", "publicacion prematura"],
+  "status": "proposed"
+}
+```
+
+Separacion obligatoria de superficies:
+
+- topic/project context
+- default capability
+- capability catalog
+- provider bindings
+- capability proposals
+
+El catalogo de capabilities debe poder crecer con cada proyecto mediante propuestas gobernadas por aprobacion humana.
+
 ## Garantias de compatibilidad
 
 - `capabilities_enabled` ausente equivale a `false`.
@@ -149,6 +213,8 @@ El comando solo lee el archivo indicado por `--config` y usa el catalogo de mode
 - Todavia no hay migracion.
 - Todavia no hay gobernanza avanzada.
 - Todavia no hay definicion final de como OpenClaw consumira capabilities externas sin acoplarse al producto Backstage.
+- Todavia no hay mecanismo persistente de `capability proposals`.
+- Todavia no hay resolucion por intencion inferida ni propuesta del architect.
 
 ## Criterio para Fase 2
 
@@ -158,5 +224,7 @@ Fase 2 solo puede avanzar si:
 - Hay commit limpio.
 - Se valida que gateway sigue funcionando.
 - Se define como OpenClaw va a leer capabilities desde NexusOS/Backstage sin acoplarse a Backstage como producto.
+- Se define el almacenamiento de topic/project context, default capability, capability catalog, provider bindings y capability proposals como superficies separadas.
+- Se preserva explicitamente que no existe `allowed_capabilities` como restriccion cerrada por topico/proyecto.
 
 Fase 2 no debe avanzar como parte de este cierre.
