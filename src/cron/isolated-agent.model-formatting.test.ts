@@ -49,6 +49,7 @@ type AgentTurnPayload = {
   kind: "agentTurn";
   message: string;
   model?: string;
+  capability?: string;
 };
 
 type SelectModelOptions = {
@@ -63,6 +64,7 @@ type SelectModelOptions = {
   sessionEntry?: {
     modelOverride?: string;
     providerOverride?: string;
+    capabilityOverride?: string;
   };
   isGmailHook?: boolean;
   agentId?: string;
@@ -313,6 +315,128 @@ describe("cron model formatting and precedence edge cases", () => {
           sessionEntry: {
             providerOverride: "openai",
             modelOverride: "gpt-4.1-mini",
+          },
+        },
+        { provider: "anthropic", model: "claude-sonnet-4-6" },
+      );
+    });
+
+    it("ignores payload capability when capabilities_enabled is absent", async () => {
+      await expectDefaultSelectedModel({
+        cfg: {
+          capabilities: {
+            bindings: {
+              research: { model: "google/gemini-2.5-pro" },
+            },
+          },
+        },
+        payload: {
+          kind: "agentTurn",
+          message: DEFAULT_MESSAGE,
+          capability: "research",
+        },
+      });
+    });
+
+    it("ignores payload capability when capabilities_enabled is false", async () => {
+      await expectDefaultSelectedModel({
+        cfg: {
+          capabilities_enabled: false,
+          capabilities: {
+            bindings: {
+              research: { model: "google/gemini-2.5-pro" },
+            },
+          },
+        },
+        payload: {
+          kind: "agentTurn",
+          message: DEFAULT_MESSAGE,
+          capability: "research",
+        },
+      });
+    });
+
+    it("resolves payload capability through bindings only when capabilities_enabled is true", async () => {
+      await expectSelectedModel(
+        {
+          cfg: {
+            capabilities_enabled: true,
+            capabilities: {
+              bindings: {
+                research: { model: "google/gemini-2.5-pro" },
+              },
+            },
+          },
+          payload: {
+            kind: "agentTurn",
+            message: DEFAULT_MESSAGE,
+            capability: "research",
+          },
+        },
+        { provider: "google", model: "gemini-2.5-pro" },
+      );
+    });
+
+    it("payload model wins over payload capability when both are present", async () => {
+      await expectSelectedModel(
+        {
+          cfg: {
+            capabilities_enabled: true,
+            capabilities: {
+              bindings: {
+                research: { model: "google/gemini-2.5-pro" },
+              },
+            },
+          },
+          payload: {
+            kind: "agentTurn",
+            message: DEFAULT_MESSAGE,
+            model: "openai/gpt-4.1-mini",
+            capability: "research",
+          },
+        },
+        { provider: "openai", model: "gpt-4.1-mini" },
+      );
+    });
+
+    it("session model override wins over capability", async () => {
+      await expectSelectedModel(
+        {
+          cfg: {
+            capabilities_enabled: true,
+            capabilities: {
+              bindings: {
+                research: { model: "google/gemini-2.5-pro" },
+              },
+            },
+          },
+          payload: {
+            kind: "agentTurn",
+            message: DEFAULT_MESSAGE,
+            capability: "research",
+          },
+          sessionEntry: {
+            providerOverride: "openai",
+            modelOverride: "gpt-4.1-mini",
+          },
+        },
+        { provider: "openai", model: "gpt-4.1-mini" },
+      );
+    });
+
+    it("resolves session capability override when no model override is present", async () => {
+      await expectSelectedModel(
+        {
+          cfg: {
+            capabilities_enabled: true,
+            capabilities: {
+              bindings: {
+                implementation: "anthropic/claude-sonnet-4-6",
+              },
+            },
+          },
+          sessionEntry: {
+            capabilityOverride: "implementation",
           },
         },
         { provider: "anthropic", model: "claude-sonnet-4-6" },

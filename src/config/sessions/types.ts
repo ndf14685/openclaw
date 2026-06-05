@@ -231,6 +231,8 @@ export type SessionEntry = {
   responseUsage?: "on" | "off" | "tokens" | "full";
   providerOverride?: string;
   modelOverride?: string;
+  /** Optional capability selection. Ignored unless capabilities_enabled is true. */
+  capabilityOverride?: string;
   /** Session-scoped agent runtime/harness override selected with the model picker. */
   agentRuntimeOverride?: string;
   /**

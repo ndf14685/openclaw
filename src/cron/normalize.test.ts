@@ -94,6 +94,19 @@ describe("normalizeCronJobCreate", () => {
     expect(delivery).toEqual({ mode: "announce" });
   });
 
+  it("preserves agentTurn capability hints without changing delivery defaults", () => {
+    const normalized = normalizeIsolatedAgentTurnCreateJob({
+      name: "capability hint",
+      payload: {
+        capability: " research ",
+      },
+    });
+
+    const payload = normalized.payload as Record<string, unknown>;
+    expect(payload.capability).toBe("research");
+    expect(normalized.delivery).toEqual({ mode: "announce" });
+  });
+
   it("trims agentId and drops null", () => {
     const normalized = normalizeCronJobCreate({
       name: "agent-set",
@@ -554,6 +567,7 @@ describe("normalizeCronJobCreate", () => {
         kind: "systemEvent",
         text: "hello",
         model: "openai/gpt-5",
+        capability: "research",
         fallbacks: ["openai/gpt-4.1-mini"],
         thinking: "high",
         timeoutSeconds: 45,

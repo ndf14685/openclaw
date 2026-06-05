@@ -120,6 +120,7 @@ describe("CronToolSchema", () => {
     expect(keysAt(schemaRecord, "job.payload")).toEqual(
       [
         "allowUnsafeExternalContent",
+        "capability",
         "fallbacks",
         "kind",
         "lightContext",
@@ -141,6 +142,7 @@ describe("CronToolSchema", () => {
     expect(keysAt(schemaRecord, "patch.payload")).toEqual(
       [
         "allowUnsafeExternalContent",
+        "capability",
         "fallbacks",
         "kind",
         "lightContext",

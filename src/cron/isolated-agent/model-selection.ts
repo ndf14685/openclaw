@@ -14,6 +14,7 @@ import {
 type CronSessionModelOverrides = {
   modelOverride?: string;
   providerOverride?: string;
+  capabilityOverride?: string;
 };
 
 export type ResolveCronModelSelectionParams = {
@@ -48,6 +49,67 @@ function formatCronPayloadModelRejection(modelOverride: string, error: string): 
     return `cron payload.model '${modelOverride}' rejected by agents.defaults.models allowlist: ${modelRef}`;
   }
   return `cron payload.model '${modelOverride}' rejected: ${error}`;
+}
+
+function normalizeCapabilityName(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function resolveCapabilityModelBinding(params: {
+  cfg: OpenClawConfig;
+  capability: string;
+}): string | undefined {
+  if (params.cfg.capabilities_enabled !== true) {
+    return undefined;
+  }
+  const binding = params.cfg.capabilities?.bindings?.[params.capability];
+  if (typeof binding === "string") {
+    const trimmed = binding.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  }
+  if (!binding || typeof binding !== "object") {
+    return undefined;
+  }
+  const model = typeof binding.model === "string" ? binding.model.trim() : "";
+  if (!model) {
+    return undefined;
+  }
+  const provider = typeof binding.provider === "string" ? binding.provider.trim() : "";
+  return provider && !model.includes("/") ? `${provider}/${model}` : model;
+}
+
+async function applyCapabilitySelection(params: {
+  cfg: OpenClawConfig;
+  cfgWithAgentDefaults: OpenClawConfig;
+  capability: string | undefined;
+  resolvedDefault: { provider: string; model: string };
+  loadCatalogOnce: () => Promise<Awaited<ReturnType<typeof loadModelCatalog>>>;
+}): Promise<{ provider: string; model: string } | null> {
+  if (!params.capability) {
+    return null;
+  }
+  const modelBinding = resolveCapabilityModelBinding({
+    cfg: params.cfg,
+    capability: params.capability,
+  });
+  if (!modelBinding) {
+    return null;
+  }
+  const resolvedCapability = resolveAllowedModelRef({
+    cfg: params.cfgWithAgentDefaults,
+    catalog: await params.loadCatalogOnce(),
+    raw: modelBinding,
+    defaultProvider: params.resolvedDefault.provider,
+    defaultModel: params.resolvedDefault.model,
+  });
+  if ("error" in resolvedCapability) {
+    return null;
+  }
+  return resolvedCapability.ref;
 }
 
 export async function resolveCronModelSelection(
@@ -129,6 +191,7 @@ export async function resolveCronModelSelection(
     model = resolvedOverride.ref.model;
   }
 
+  let sessionModelOverrideApplied = false;
   if (!modelOverride && !hooksGmailModelApplied) {
     const sessionModelOverride = params.sessionEntry.modelOverride?.trim();
     if (sessionModelOverride) {
@@ -144,6 +207,37 @@ export async function resolveCronModelSelection(
       if (!("error" in resolvedSessionOverride)) {
         provider = resolvedSessionOverride.ref.provider;
         model = resolvedSessionOverride.ref.model;
+        sessionModelOverrideApplied = true;
+      }
+    }
+  }
+
+  if (!modelOverride && !sessionModelOverrideApplied) {
+    const capability =
+      params.payload.kind === "agentTurn"
+        ? normalizeCapabilityName(params.payload.capability)
+        : undefined;
+    const capabilitySelection = await applyCapabilitySelection({
+      cfg: params.cfg,
+      cfgWithAgentDefaults: params.cfgWithAgentDefaults,
+      capability,
+      resolvedDefault,
+      loadCatalogOnce,
+    });
+    if (capabilitySelection) {
+      provider = capabilitySelection.provider;
+      model = capabilitySelection.model;
+    } else {
+      const sessionCapabilitySelection = await applyCapabilitySelection({
+        cfg: params.cfg,
+        cfgWithAgentDefaults: params.cfgWithAgentDefaults,
+        capability: normalizeCapabilityName(params.sessionEntry.capabilityOverride),
+        resolvedDefault,
+        loadCatalogOnce,
+      });
+      if (sessionCapabilitySelection) {
+        provider = sessionCapabilitySelection.provider;
+        model = sessionCapabilitySelection.model;
       }
     }
   }

@@ -36,6 +36,7 @@ function hasTrimmedStringValue(value: unknown) {
 function hasAgentTurnPayloadHint(payload: UnknownRecord) {
   return (
     hasTrimmedStringValue(payload.model) ||
+    hasTrimmedStringValue(payload.capability) ||
     normalizeTrimmedStringArray(payload.fallbacks) !== undefined ||
     normalizeTrimmedStringArray(payload.toolsAllow, { allowNull: true }) !== undefined ||
     hasTrimmedStringValue(payload.thinking) ||
@@ -205,6 +206,14 @@ function coercePayload(payload: UnknownRecord) {
       delete next.model;
     }
   }
+  if ("capability" in next) {
+    const capability = parseOptionalField(TrimmedNonEmptyStringFieldSchema, next.capability);
+    if (capability !== undefined) {
+      next.capability = capability;
+    } else {
+      delete next.capability;
+    }
+  }
   if ("thinking" in next) {
     const thinking = parseOptionalField(TrimmedNonEmptyStringFieldSchema, next.thinking);
     if (thinking !== undefined) {
@@ -246,6 +255,7 @@ function coercePayload(payload: UnknownRecord) {
   if (next.kind === "systemEvent") {
     delete next.message;
     delete next.model;
+    delete next.capability;
     delete next.fallbacks;
     delete next.thinking;
     delete next.timeoutSeconds;
@@ -366,7 +376,7 @@ function normalizeWakeMode(raw: unknown) {
 }
 
 function copyTopLevelAgentTurnFields(next: UnknownRecord, payload: UnknownRecord) {
-  const copyString = (field: "model" | "thinking") => {
+  const copyString = (field: "model" | "capability" | "thinking") => {
     if (normalizeOptionalString(payload[field])) {
       return;
     }
@@ -377,6 +387,7 @@ function copyTopLevelAgentTurnFields(next: UnknownRecord, payload: UnknownRecord
     }
   };
   copyString("model");
+  copyString("capability");
   copyString("thinking");
 
   if (typeof payload.timeoutSeconds !== "number" && typeof next.timeoutSeconds === "number") {
@@ -409,6 +420,7 @@ function copyTopLevelAgentTurnFields(next: UnknownRecord, payload: UnknownRecord
 
 function stripLegacyTopLevelFields(next: UnknownRecord) {
   delete next.model;
+  delete next.capability;
   delete next.thinking;
   delete next.timeoutSeconds;
   delete next.fallbacks;

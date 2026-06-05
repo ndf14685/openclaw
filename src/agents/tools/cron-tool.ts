@@ -40,6 +40,7 @@ const CRON_FLAT_PAYLOAD_KEYS = [
   "message",
   "text",
   "model",
+  "capability",
   "fallbacks",
   "toolsAllow",
   "thinking",
@@ -143,6 +144,7 @@ function cronPayloadObjectSchema(params: { toolsAllow: TSchema }) {
       text: Type.Optional(Type.String({ description: "Message text (kind=systemEvent)" })),
       message: Type.Optional(Type.String({ description: "Agent prompt (kind=agentTurn)" })),
       model: Type.Optional(Type.String({ description: "Model override" })),
+      capability: Type.Optional(Type.String({ description: "Capability binding override" })),
       thinking: Type.Optional(Type.String({ description: "Thinking level override" })),
       timeoutSeconds: Type.Optional(Type.Number()),
       lightContext: Type.Optional(Type.Boolean()),
@@ -676,7 +678,7 @@ PAYLOAD TYPES (payload.kind):
 - "systemEvent": Injects text as system event into session
   { "kind": "systemEvent", "text": "<message>" }
 - "agentTurn": Runs agent with message (isolated sessions only)
-  { "kind": "agentTurn", "message": "<prompt>", "model": "<optional>", "thinking": "<optional>", "timeoutSeconds": <optional, 0 means no timeout> }
+  { "kind": "agentTurn", "message": "<prompt>", "model": "<optional>", "capability": "<optional>", "thinking": "<optional>", "timeoutSeconds": <optional, 0 means no timeout> }
 
 DELIVERY (top-level):
   { "mode": "none|announce|webhook", "channel": "<optional>", "to": "<optional>", "threadId": "<optional>", "bestEffort": <optional-bool> }

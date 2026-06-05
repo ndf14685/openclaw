@@ -37,8 +37,26 @@ export type SurfaceConfigEntry = {
   silentReplyRewrite?: SilentReplyRewriteShape;
 };
 
+export type CapabilityBindingConfig =
+  | string
+  | {
+      /** Provider/model ref used when this capability is explicitly selected. */
+      model?: string;
+      /** Optional provider id paired with `model` when model is providerless. */
+      provider?: string;
+    };
+
+export type CapabilitiesConfig = {
+  /** Capability name to provider/model binding. Ignored unless capabilities_enabled is true. */
+  bindings?: Record<string, CapabilityBindingConfig>;
+};
+
 export type OpenClawConfig = {
   $schema?: string;
+  /** Global opt-in for capability-based routing. Missing/false preserves current routing. */
+  capabilities_enabled?: boolean;
+  /** Optional capability routing bindings. Ignored unless capabilities_enabled is true. */
+  capabilities?: CapabilitiesConfig;
   meta?: {
     /** Last OpenClaw version that wrote this config. */
     lastTouchedVersion?: string;

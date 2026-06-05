@@ -167,6 +167,23 @@ const MemorySchema = z
   .strict()
   .optional();
 
+const CapabilityBindingSchema = z.union([
+  z.string(),
+  z
+    .object({
+      model: z.string().optional(),
+      provider: z.string().optional(),
+    })
+    .strict(),
+]);
+
+const CapabilitiesSchema = z
+  .object({
+    bindings: z.record(z.string().min(1), CapabilityBindingSchema).optional(),
+  })
+  .strict()
+  .optional();
+
 const HttpUrlSchema = z
   .string()
   .url()
@@ -337,6 +354,8 @@ const CommitmentsSchema = z
 export const OpenClawSchema = z
   .object({
     $schema: z.string().optional(),
+    capabilities_enabled: z.boolean().optional(),
+    capabilities: CapabilitiesSchema,
     meta: z
       .object({
         lastTouchedVersion: z.string().optional(),

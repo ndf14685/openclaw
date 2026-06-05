@@ -153,6 +153,8 @@ type CronAgentTurnPayloadFields = {
   message: string;
   /** Optional model override (provider/model or alias). */
   model?: string;
+  /** Optional capability binding name. Ignored unless capabilities_enabled is true. */
+  capability?: string;
   /** Optional per-job fallback models; overrides agent/global fallbacks when defined. */
   fallbacks?: string[];
   thinking?: string;
