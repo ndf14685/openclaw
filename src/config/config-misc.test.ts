@@ -58,6 +58,38 @@ describe("boolean config validation", () => {
   });
 });
 
+describe("ProjectWorkflow config", () => {
+  it("accepts the default-off feature flag and pilot routes", () => {
+    const result = OpenClawSchema.safeParse({
+      project_workflows_enabled: false,
+      project_workflows: {
+        pilots: [
+          {
+            channel: "telegram",
+            accountId: "default",
+            chatId: "-1003958513253",
+            topicId: "2679",
+            projectId: "idp-platform",
+          },
+        ],
+      },
+    });
+
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects pilot routes without a topic id", () => {
+    const result = OpenClawSchema.safeParse({
+      project_workflows_enabled: true,
+      project_workflows: {
+        pilots: [{ projectId: "idp-platform" }],
+      },
+    });
+
+    expect(result.success).toBe(false);
+  });
+});
+
 describe("model provider localService config", () => {
   it("accepts standalone timeout overlays for bundled model providers", () => {
     const result = OpenClawSchema.safeParse({

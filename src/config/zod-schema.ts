@@ -449,6 +449,25 @@ const CommitmentsSchema = z
   .strict()
   .optional();
 
+const ProjectWorkflowsSchema = z
+  .object({
+    pilots: z
+      .array(
+        z
+          .object({
+            channel: z.string().min(1).optional(),
+            accountId: z.string().min(1).optional(),
+            chatId: z.string().min(1).optional(),
+            topicId: z.string().min(1),
+            projectId: z.string().min(1),
+          })
+          .strict(),
+      )
+      .optional(),
+  })
+  .strict()
+  .optional();
+
 export const OpenClawSchema = z
   .object({
     $schema: z.string().optional(),
@@ -771,6 +790,8 @@ export const OpenClawSchema = z
     tools: ToolsSchema,
     security: SecuritySchema,
     bindings: BindingsSchema,
+    project_workflows_enabled: z.boolean().optional(),
+    project_workflows: ProjectWorkflowsSchema,
     broadcast: BroadcastSchema,
     audio: AudioSchema,
     media: z

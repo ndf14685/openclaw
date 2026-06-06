@@ -52,6 +52,19 @@ export type SurfaceConfigEntry = {
   silentReply?: SilentReplyPolicyShape;
 };
 
+export type ProjectWorkflowPilotConfig = {
+  channel?: string;
+  accountId?: string;
+  chatId?: string;
+  topicId: string;
+  projectId: string;
+};
+
+export type ProjectWorkflowsConfig = {
+  /** Pilot routes eligible for the dry-run ProjectWorkflow runtime. */
+  pilots?: ProjectWorkflowPilotConfig[];
+};
+
 export type OpenClawConfig = {
   $schema?: string;
   meta?: {
@@ -128,6 +141,10 @@ export type OpenClawConfig = {
   agents?: AgentsConfig;
   tools?: ToolsConfig;
   bindings?: AgentBinding[];
+  /** Global opt-in for ProjectWorkflow routing. Missing/false preserves legacy routing. */
+  project_workflows_enabled?: boolean;
+  /** Optional ProjectWorkflow dry-run configuration. */
+  project_workflows?: ProjectWorkflowsConfig;
   broadcast?: BroadcastConfig;
   audio?: AudioConfig;
   media?: {

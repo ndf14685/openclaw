@@ -182,6 +182,49 @@ describe("getReplyFromConfig fast test bootstrap", () => {
     expect(preparedReplyParams.cfg).toBe(cfg);
   });
 
+  it("handles ProjectWorkflow dry-run before workspace, session, or agent runtime setup", async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-project-workflow-reply-"));
+    vi.stubEnv("OPENCLAW_STATE_DIR", home);
+    const cfg = withFastReplyConfig({
+      project_workflows_enabled: true,
+      project_workflows: {
+        pilots: [
+          {
+            channel: "telegram",
+            accountId: "default",
+            chatId: "-1003958513253",
+            topicId: "2679",
+            projectId: "idp-platform",
+          },
+        ],
+      },
+    } as OpenClawConfig);
+
+    const reply = await getReplyFromConfig(
+      buildGetReplyCtx({
+        Body: "Quiero resolver X",
+        CommandBody: "Quiero resolver X",
+        BodyForCommands: "Quiero resolver X",
+        Provider: "telegram",
+        Surface: "telegram",
+        AccountId: "default",
+        To: "-1003958513253",
+        OriginatingTo: "-1003958513253",
+        MessageThreadId: "2679",
+      }),
+      undefined,
+      cfg,
+    );
+
+    expect(reply).toEqual({
+      text: expect.stringContaining("phase=awaiting_human_approval"),
+    });
+    expect(mocks.ensureAgentWorkspace).not.toHaveBeenCalled();
+    expect(mocks.initSessionState).not.toHaveBeenCalled();
+    expect(mocks.resolveReplyDirectives).not.toHaveBeenCalled();
+    expect(vi.mocked(runPreparedReplyMock)).not.toHaveBeenCalled();
+  });
+
   it("still merges partial config overrides against getRuntimeConfig()", async () => {
     vi.stubEnv("OPENCLAW_ALLOW_SLOW_REPLY_TESTS", "1");
     vi.mocked(loadConfigMock).mockReturnValue({
