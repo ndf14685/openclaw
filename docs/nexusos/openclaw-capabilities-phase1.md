@@ -22,6 +22,9 @@ La frontera esperada es:
 
 Decision arquitectonica: [ADR-0001: Capability Governance and Intent Resolution](../adr/ADR-0001-capability-governance-and-intent-resolution.md).
 
+La orquestacion de trabajo por proyecto queda separada de los overrides manuales
+de capability. Ver [ADR-0002: Project Workflow State](../adr/ADR-0002-project-workflow-state.md).
+
 OpenClaw no debe modelar una jaula de capabilities permitidas por topico, proyecto o canal. En particular, no debe introducir `allowed_capabilities` como lista cerrada que bloquee capacidades nuevas por proyecto.
 
 Las capabilities son funcionales, dinamicas y emergentes. Un topico/proyecto puede aportar contexto de resolucion, pero no debe limitar el crecimiento del catalogo.
