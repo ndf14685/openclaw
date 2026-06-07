@@ -5,7 +5,10 @@ export type ProjectWorkflowStatus =
   | "approved_for_implementation"
   | "implementer_running"
   | "reviewer_running"
+  | "review_passed"
+  | "review_failed"
   | "completed"
+  | "blocked"
   | "rejected"
   | "cancelled";
 
@@ -24,10 +27,35 @@ export type ProjectWorkflowRoute = {
   topicId: string;
 };
 
+export type ProjectWorkflowTestResult = {
+  command: string;
+  status: "passed" | "failed" | "skipped";
+  exitCode?: number;
+  logPath?: string;
+};
+
 export type ProjectWorkflowArtifact = {
   architectProposal?: string;
   implementationSummary?: string;
   reviewSummary?: string;
+  reviewStatus?: "passed" | "failed" | "blocked" | "simulated";
+  reviewRecommendation?: "aprobar" | "corregir";
+  reviewFindings?: string[];
+  reviewRisks?: string[];
+  reviewStdoutPath?: string;
+  reviewStderrPath?: string;
+  reviewGitStatusBeforePath?: string;
+  reviewGitStatusAfterPath?: string;
+  reviewDiffBeforePath?: string;
+  reviewDiffAfterPath?: string;
+  implementerStatus?: "completed" | "blocked";
+  blockedReason?: string;
+  worktreePath?: string;
+  branchName?: string;
+  artifactDir?: string;
+  changedFiles?: string[];
+  diffStat?: string;
+  tests?: ProjectWorkflowTestResult[];
 };
 
 export type ProjectWorkflowAuditEvent = {

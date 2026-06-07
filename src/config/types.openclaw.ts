@@ -60,9 +60,28 @@ export type ProjectWorkflowPilotConfig = {
   projectId: string;
 };
 
+export type ProjectWorkflowReviewerConfig = {
+  enabled?: boolean;
+  codexCli?: string;
+  timeoutMs?: number;
+};
+
+export type ProjectWorkflowProjectConfig = {
+  repoPath: string;
+  worktreeRoot?: string;
+  allowedRoots: string[];
+  deniedRoots?: string[];
+  tests?: string[];
+  codexCli?: string;
+  codexTimeoutMs?: number;
+  reviewer?: ProjectWorkflowReviewerConfig;
+};
+
 export type ProjectWorkflowsConfig = {
   /** Pilot routes eligible for the dry-run ProjectWorkflow runtime. */
   pilots?: ProjectWorkflowPilotConfig[];
+  /** Project-specific implementation sandbox settings. */
+  projects?: Record<string, ProjectWorkflowProjectConfig>;
 };
 
 export type OpenClawConfig = {

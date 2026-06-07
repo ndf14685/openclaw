@@ -201,6 +201,49 @@ operator control, but they must not be required in the happy path.
 Capabilities are internal to the workflow engine. They are not the main command
 surface for the user.
 
+## Phase 2 Reviewer Runtime
+
+The first real reviewer binding is optional per project. When reviewer runtime
+is not explicitly enabled, the workflow preserves the simulated reviewer fallback
+and marks the result as pending human semantic review.
+
+When enabled, the reviewer runs after the implementer and receives only objective
+evidence: original request, approved architect proposal, repository path,
+worktree path, branch name, git status, git diff, changed files, implementer
+commands, test results, artifact paths, and acceptance criteria when present.
+
+The reviewer runs as a clean-room Codex invocation in a new session with a
+read-only sandbox where the CLI supports it. The reviewer prompt explicitly
+forbids edits, fixes, patches, formatting, installs, commits, deploys, and
+restarts. OpenClaw records git status and diff before and after review. If the
+reviewer leaves any additional worktree change, the workflow is blocked and the
+review is invalidated.
+
+Reviewer output must include:
+
+```text
+RESULTADO: PASS | FAIL
+
+HALLAZGOS:
+- ...
+
+RIESGOS:
+- ...
+
+TESTS VERIFICADOS:
+- ...
+
+CRITERIOS DE ACEPTACION:
+- [ok/fail] ...
+
+RECOMENDACION FINAL:
+- aprobar / corregir antes de cerrar
+```
+
+A passing real review appends `reviewer_running`, `review_passed`, and then
+`completed` to the audit trail. A failing real review records `review_failed`
+and leaves the worktree/artifacts for human inspection.
+
 ## Relationship With Telegram
 
 Telegram topics are workflow routes and operator surfaces.

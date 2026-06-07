@@ -464,6 +464,30 @@ const ProjectWorkflowsSchema = z
           .strict(),
       )
       .optional(),
+    projects: z
+      .record(
+        z.string().min(1),
+        z
+          .object({
+            repoPath: z.string().min(1),
+            worktreeRoot: z.string().min(1).optional(),
+            allowedRoots: z.array(z.string().min(1)).min(1),
+            deniedRoots: z.array(z.string().min(1)).optional(),
+            tests: z.array(z.string().min(1)).optional(),
+            codexCli: z.string().min(1).optional(),
+            codexTimeoutMs: z.number().int().positive().optional(),
+            reviewer: z
+              .object({
+                enabled: z.boolean().optional(),
+                codexCli: z.string().min(1).optional(),
+                timeoutMs: z.number().int().positive().optional(),
+              })
+              .strict()
+              .optional(),
+          })
+          .strict(),
+      )
+      .optional(),
   })
   .strict()
   .optional();

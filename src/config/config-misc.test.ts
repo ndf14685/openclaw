@@ -88,6 +88,30 @@ describe("ProjectWorkflow config", () => {
 
     expect(result.success).toBe(false);
   });
+
+  it("accepts ProjectWorkflow project sandbox and reviewer settings", () => {
+    const result = OpenClawSchema.safeParse({
+      project_workflows_enabled: true,
+      project_workflows: {
+        pilots: [{ topicId: "2679", projectId: "idp-platform" }],
+        projects: {
+          "idp-platform": {
+            repoPath: "/home/ndf/idp-platform",
+            worktreeRoot: "/home/ndf/openclaw-projectworkflow-runs",
+            allowedRoots: ["docs/nexusos/"],
+            deniedRoots: [".env", "secrets"],
+            tests: ["python3 -m pytest tests/nexusos"],
+            reviewer: {
+              enabled: true,
+              timeoutMs: 300000,
+            },
+          },
+        },
+      },
+    });
+
+    expect(result.success).toBe(true);
+  });
 });
 
 describe("model provider localService config", () => {
