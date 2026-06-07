@@ -60,6 +60,10 @@ export type ProjectWorkflowPilotConfig = {
   projectId: string;
 };
 
+export type ProjectWorkflowReviewPolicyConfig = {
+  mode?: "advisory" | "required";
+};
+
 export type ProjectWorkflowReviewerConfig = {
   enabled?: boolean;
   codexCli?: string;
@@ -74,7 +78,9 @@ export type ProjectWorkflowProjectConfig = {
   tests?: string[];
   codexCli?: string;
   codexTimeoutMs?: number;
+  review?: ProjectWorkflowReviewPolicyConfig;
   reviewer?: ProjectWorkflowReviewerConfig;
+  architectureReviewer?: ProjectWorkflowReviewerConfig;
 };
 
 export type ProjectWorkflowsConfig = {

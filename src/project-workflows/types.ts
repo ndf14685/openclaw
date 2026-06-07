@@ -7,7 +7,9 @@ export type ProjectWorkflowStatus =
   | "reviewer_running"
   | "review_passed"
   | "review_failed"
+  | "architecture_review_failed"
   | "completed"
+  | "completed_with_warnings"
   | "blocked"
   | "rejected"
   | "cancelled";
@@ -37,6 +39,7 @@ export type ProjectWorkflowTestResult = {
 export type ProjectWorkflowArtifact = {
   architectProposal?: string;
   implementationSummary?: string;
+  reviewMode?: "advisory" | "required";
   reviewSummary?: string;
   reviewStatus?: "passed" | "failed" | "blocked" | "simulated";
   reviewRecommendation?: "aprobar" | "corregir";
@@ -48,6 +51,15 @@ export type ProjectWorkflowArtifact = {
   reviewGitStatusAfterPath?: string;
   reviewDiffBeforePath?: string;
   reviewDiffAfterPath?: string;
+  architectureReviewSummary?: string;
+  architectureReviewStatus?: "passed" | "failed" | "blocked" | "simulated" | "skipped";
+  architectureReviewRecommendation?: "aprobar" | "corregir";
+  architectureReviewStdoutPath?: string;
+  architectureReviewStderrPath?: string;
+  architectureReviewGitStatusBeforePath?: string;
+  architectureReviewGitStatusAfterPath?: string;
+  architectureReviewDiffBeforePath?: string;
+  architectureReviewDiffAfterPath?: string;
   implementerStatus?: "completed" | "blocked";
   blockedReason?: string;
   worktreePath?: string;

@@ -56,7 +56,9 @@ const DEFAULT_PROJECTS: Record<string, ProjectWorkflowProjectConfig> = {
 
 const TERMINAL_STATUSES = new Set<ProjectWorkflowStatus>([
   "completed",
+  "completed_with_warnings",
   "review_failed",
+  "architecture_review_failed",
   "rejected",
   "cancelled",
   "blocked",
@@ -81,8 +83,10 @@ type ImplementerResult = {
   tests: ImplementerTestResult[];
 };
 
+type ReviewMode = "advisory" | "required";
+
 type ReviewerResult = {
-  status: "passed" | "failed" | "blocked" | "simulated";
+  status: "passed" | "failed" | "blocked" | "simulated" | "skipped";
   summary: string;
   recommendation?: "aprobar" | "corregir";
   findings?: string[];
@@ -112,6 +116,11 @@ export type ProjectWorkflowRuntimeOptions = {
     project: ResolvedProjectWorkflowProjectConfig;
   }) => Promise<ImplementerResult>;
   reviewerRunner?: (params: {
+    workflow: ProjectWorkflowRecord;
+    project: ResolvedProjectWorkflowProjectConfig;
+    implementerResult: ImplementerResult;
+  }) => Promise<ReviewerResult>;
+  architectureReviewerRunner?: (params: {
     workflow: ProjectWorkflowRecord;
     project: ResolvedProjectWorkflowProjectConfig;
     implementerResult: ImplementerResult;
@@ -309,6 +318,10 @@ async function runClaudeArchitect(params: { goal: string; projectId: string }): 
     throw new Error("Claude Architect returned an empty proposal.");
   }
   return proposal;
+}
+
+function resolveReviewMode(project: ResolvedProjectWorkflowProjectConfig): ReviewMode {
+  return project.review?.mode ?? "required";
 }
 
 function resolveProjectConfig(
@@ -843,6 +856,27 @@ async function defaultReviewerRunner(params: {
   };
 }
 
+async function defaultArchitectureReviewerRunner(params: {
+  workflow: ProjectWorkflowRecord;
+  project: ResolvedProjectWorkflowProjectConfig;
+  implementerResult: ImplementerResult;
+}): Promise<ReviewerResult> {
+  if (params.project.architectureReviewer?.enabled !== true) {
+    return {
+      status: "skipped",
+      summary: "Architecture Reviewer no configurado para este proyecto.",
+      artifactDir: params.implementerResult.artifactDir,
+    };
+  }
+  return await defaultReviewerRunner({
+    ...params,
+    project: {
+      ...params.project,
+      reviewer: params.project.architectureReviewer,
+    },
+  });
+}
+
 function applyImplementerResult(
   workflow: ProjectWorkflowRecord,
   result: ImplementerResult,
@@ -880,7 +914,7 @@ function applyImplementerResult(
   workflow.currentCapability = "reviewer";
 }
 
-function applyReviewerResult(
+function applyReviewerArtifacts(
   workflow: ProjectWorkflowRecord,
   result: ReviewerResult,
   at: string,
@@ -897,35 +931,143 @@ function applyReviewerResult(
   workflow.artifacts.reviewDiffBeforePath = result.diffBeforePath;
   workflow.artifacts.reviewDiffAfterPath = result.diffAfterPath;
   workflow.updatedAt = at;
+}
 
-  appendAudit(workflow, "reviewer_running", "Reviewer ejecutado despues del implementer.", at);
+function applyArchitectureReviewArtifacts(
+  workflow: ProjectWorkflowRecord,
+  result: ReviewerResult,
+  at: string,
+): void {
+  workflow.artifacts.architectureReviewSummary = result.summary;
+  workflow.artifacts.architectureReviewStatus = result.status;
+  workflow.artifacts.architectureReviewRecommendation = result.recommendation;
+  workflow.artifacts.architectureReviewStdoutPath = result.stdoutPath;
+  workflow.artifacts.architectureReviewStderrPath = result.stderrPath;
+  workflow.artifacts.architectureReviewGitStatusBeforePath = result.gitStatusBeforePath;
+  workflow.artifacts.architectureReviewGitStatusAfterPath = result.gitStatusAfterPath;
+  workflow.artifacts.architectureReviewDiffBeforePath = result.diffBeforePath;
+  workflow.artifacts.architectureReviewDiffAfterPath = result.diffAfterPath;
+  workflow.updatedAt = at;
+}
 
-  if (result.status === "blocked") {
-    workflow.status = "blocked";
-    workflow.phase = "result";
-    workflow.currentCapability = "reviewer";
-    workflow.artifacts.blockedReason = result.blockedReason ?? result.summary;
-    appendAudit(workflow, "blocked", result.blockedReason ?? "Reviewer bloqueado.", at);
-    return;
-  }
+function isReviewFailure(result: ReviewerResult): boolean {
+  return result.status === "failed" || result.status === "blocked";
+}
 
-  if (result.status === "failed") {
-    workflow.status = "review_failed";
-    workflow.phase = "result";
-    workflow.currentCapability = "reviewer";
-    appendAudit(workflow, "review_failed", result.blockedReason ?? "Reviewer reporto FAIL.", at);
-    return;
-  }
+function appendReviewAudit(
+  workflow: ProjectWorkflowRecord,
+  status: ProjectWorkflowStatus,
+  note: string,
+  at: string,
+): void {
+  appendAudit(workflow, status, note, at);
+}
 
-  if (result.status === "passed") {
-    appendAudit(workflow, "review_passed", "Reviewer real reporto PASS.", at);
-  } else {
-    appendAudit(workflow, "review_passed", "Reviewer simulado conservado por configuracion.", at);
-  }
-  workflow.status = "completed";
+function finalizeReviewPolicy(params: {
+  workflow: ProjectWorkflowRecord;
+  technicalReview: ReviewerResult;
+  architectureReview: ReviewerResult;
+  mode: ReviewMode;
+  at: string;
+}): void {
+  const { workflow, technicalReview, architectureReview, mode, at } = params;
+  workflow.artifacts.reviewMode = mode;
   workflow.phase = "result";
   workflow.currentCapability = "reviewer";
-  appendAudit(workflow, "completed", "Workflow implementado en worktree controlado.", at);
+
+  appendReviewAudit(
+    workflow,
+    "reviewer_running",
+    "Technical Reviewer ejecutado despues del implementer.",
+    at,
+  );
+  if (technicalReview.status === "passed" || technicalReview.status === "simulated") {
+    appendReviewAudit(
+      workflow,
+      "review_passed",
+      "Technical Reviewer aprobo o quedo simulado por configuracion.",
+      at,
+    );
+  } else {
+    appendReviewAudit(
+      workflow,
+      "review_failed",
+      technicalReview.blockedReason ?? "Technical Reviewer reporto FAIL.",
+      at,
+    );
+  }
+
+  if (architectureReview.status !== "skipped") {
+    if (architectureReview.status === "passed" || architectureReview.status === "simulated") {
+      appendReviewAudit(workflow, "review_passed", "Architecture Reviewer aprobo.", at);
+    } else {
+      appendReviewAudit(
+        workflow,
+        "architecture_review_failed",
+        architectureReview.blockedReason ?? "Architecture Reviewer reporto FAIL.",
+        at,
+      );
+    }
+  }
+
+  if (technicalReview.status === "blocked") {
+    workflow.status = "blocked";
+    workflow.artifacts.blockedReason = technicalReview.blockedReason ?? technicalReview.summary;
+    appendReviewAudit(
+      workflow,
+      "blocked",
+      technicalReview.blockedReason ?? "Technical Reviewer bloqueado.",
+      at,
+    );
+    return;
+  }
+  if (architectureReview.status === "blocked") {
+    workflow.status = "blocked";
+    workflow.artifacts.blockedReason =
+      architectureReview.blockedReason ?? architectureReview.summary;
+    appendReviewAudit(
+      workflow,
+      "blocked",
+      architectureReview.blockedReason ?? "Architecture Reviewer bloqueado.",
+      at,
+    );
+    return;
+  }
+
+  const technicalFailed = technicalReview.status === "failed";
+  const architectureFailed = architectureReview.status === "failed";
+
+  if (mode === "advisory") {
+    if (technicalFailed || architectureFailed) {
+      workflow.status = "completed_with_warnings";
+      appendReviewAudit(
+        workflow,
+        "completed_with_warnings",
+        "Workflow completado con observaciones de review advisory.",
+        at,
+      );
+      return;
+    }
+    workflow.status = "completed";
+    appendReviewAudit(
+      workflow,
+      "completed",
+      "Workflow completado con reviews advisory sin observaciones bloqueantes.",
+      at,
+    );
+    return;
+  }
+
+  if (technicalFailed) {
+    workflow.status = "review_failed";
+    return;
+  }
+  if (architectureFailed) {
+    workflow.status = "architecture_review_failed";
+    return;
+  }
+  workflow.status = "completed";
+  appendReviewAudit(workflow, "completed", "Workflow implementado en worktree controlado.", at);
 }
 
 function formatWorkflowHeader(workflow: ProjectWorkflowRecord): string {
@@ -982,6 +1124,22 @@ function formatChangedFiles(files: string[] | undefined): string {
   return files.map((file) => "- " + file).join("\n");
 }
 
+function formatReviewStatusLine(label: string, status: string | undefined): string {
+  if (status === "passed") {
+    return label + ": PASS";
+  }
+  if (status === "failed") {
+    return label + ": FAIL";
+  }
+  if (status === "blocked") {
+    return label + ": BLOCKED";
+  }
+  if (status === "skipped") {
+    return label + ": SKIPPED";
+  }
+  return label + ": simulado";
+}
+
 function formatCompletedReply(workflow: ProjectWorkflowRecord): ReplyPayload {
   return {
     text: [
@@ -1004,11 +1162,12 @@ function formatCompletedReply(workflow: ProjectWorkflowRecord): ReplyPayload {
       "Branch:",
       workflow.artifacts.branchName ?? "no registrada",
       "",
-      workflow.artifacts.reviewStatus === "passed"
-        ? "Reviewer (Codex real): PASS"
-        : "Reviewer simulado:",
+      formatReviewStatusLine("Technical Reviewer", workflow.artifacts.reviewStatus),
       workflow.artifacts.reviewSummary ??
         "Reviewer simulado: no ejecuto revision semantica real. Pendiente de revision humana.",
+      "",
+      formatReviewStatusLine("Architecture Reviewer", workflow.artifacts.architectureReviewStatus),
+      workflow.artifacts.architectureReviewSummary ?? "Architecture Reviewer no configurado.",
     ].join("\n"),
   };
 }
@@ -1048,8 +1207,12 @@ function formatReviewFailedReply(workflow: ProjectWorkflowRecord): ReplyPayload 
     text: [
       formatWorkflowHeader(workflow),
       "",
-      "Reviewer (Codex real): FAIL",
-      workflow.artifacts.reviewSummary ?? "Reviewer real reporto FAIL.",
+      workflow.status === "architecture_review_failed"
+        ? "Architecture Reviewer: FAIL"
+        : "Technical Reviewer: FAIL",
+      workflow.status === "architecture_review_failed"
+        ? (workflow.artifacts.architectureReviewSummary ?? "Architecture Reviewer reporto FAIL.")
+        : (workflow.artifacts.reviewSummary ?? "Reviewer real reporto FAIL."),
       "",
       "Recomendacion:",
       workflow.artifacts.reviewRecommendation ?? "corregir",
@@ -1187,10 +1350,25 @@ export async function handleProjectWorkflowReply(
         project,
         implementerResult: result,
       });
-      applyReviewerResult(active, review, now);
+      const architectureReview = await (
+        opts.architectureReviewerRunner ?? defaultArchitectureReviewerRunner
+      )({
+        workflow: active,
+        project,
+        implementerResult: result,
+      });
+      applyReviewerArtifacts(active, review, now);
+      applyArchitectureReviewArtifacts(active, architectureReview, now);
+      finalizeReviewPolicy({
+        workflow: active,
+        technicalReview: review,
+        architectureReview,
+        mode: resolveReviewMode(project),
+        at: now,
+      });
       return active.status === "blocked"
         ? formatBlockedReply(active)
-        : active.status === "review_failed"
+        : active.status === "review_failed" || active.status === "architecture_review_failed"
           ? formatReviewFailedReply(active)
           : formatCompletedReply(active);
     }

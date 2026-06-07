@@ -201,6 +201,45 @@ operator control, but they must not be required in the happy path.
 Capabilities are internal to the workflow engine. They are not the main command
 surface for the user.
 
+## Review Policy
+
+Each project may configure review policy with:
+
+```yaml
+review:
+  mode: advisory | required
+```
+
+When `review.mode` is omitted, OpenClaw defaults to `required` to preserve the
+safer historical behavior. NexusOS should use `review.mode: required` by
+default.
+
+In `advisory` mode, Technical Reviewer and configured Architecture Reviewer
+results are always recorded in artifacts and audit trail, but reviewer FAIL
+results do not prevent closure. A workflow with any advisory FAIL ends as
+`completed_with_warnings` so the operator can see the unresolved findings.
+
+In `required` mode, every configured reviewer must approve. Technical Reviewer
+FAIL ends as `review_failed`; Architecture Reviewer FAIL ends as
+`architecture_review_failed` when the technical review passed. If both fail,
+Technical Reviewer failure takes precedence and the workflow ends as
+`review_failed`.
+
+Policy matrix:
+
+| Mode     | Technical Review | Architecture Review | Final status                 |
+| -------- | ---------------- | ------------------- | ---------------------------- |
+| advisory | PASS             | PASS                | `completed`                  |
+| advisory | FAIL             | PASS                | `completed_with_warnings`    |
+| advisory | PASS             | FAIL                | `completed_with_warnings`    |
+| advisory | FAIL             | FAIL                | `completed_with_warnings`    |
+| required | PASS             | PASS                | `completed`                  |
+| required | FAIL             | PASS/FAIL           | `review_failed`              |
+| required | PASS             | FAIL                | `architecture_review_failed` |
+
+Reviewer runtime safety failures, such as a reviewer mutating the worktree
+during a read-only review, remain `blocked` regardless of review policy.
+
 ## Phase 2 Reviewer Runtime
 
 The first real reviewer binding is optional per project. When reviewer runtime

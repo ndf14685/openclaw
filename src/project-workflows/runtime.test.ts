@@ -30,6 +30,19 @@ const cfg = {
   },
 } satisfies OpenClawConfig;
 
+const advisoryCfg = {
+  ...cfg,
+  project_workflows: {
+    ...cfg.project_workflows,
+    projects: {
+      "idp-platform": {
+        ...cfg.project_workflows.projects["idp-platform"],
+        review: { mode: "advisory" as const },
+      },
+    },
+  },
+} satisfies OpenClawConfig;
+
 function telegramTopicCtx(body: string) {
   return {
     Body: body,
@@ -95,6 +108,22 @@ const blockedReviewerRunner = async () => ({
   blockedReason: "reviewer changed worktree status or diff",
 });
 
+const passArchitectureReviewerRunner = async () => ({
+  status: "passed" as const,
+  summary: "RESULTADO: PASS\n\nHALLAZGOS:\n- arquitectura ok\n\nRECOMENDACION FINAL:\n- aprobar",
+  recommendation: "aprobar" as const,
+  artifactDir: "/tmp/pwf_test/artifacts",
+});
+
+const failArchitectureReviewerRunner = async () => ({
+  status: "failed" as const,
+  summary:
+    "RESULTADO: FAIL\n\nHALLAZGOS:\n- riesgo arquitectonico\n\nRECOMENDACION FINAL:\n- corregir antes de cerrar",
+  recommendation: "corregir" as const,
+  artifactDir: "/tmp/pwf_test/artifacts",
+  blockedReason: "architecture reviewer reported FAIL",
+});
+
 async function makeStorePath() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-project-workflows-"));
   return path.join(root, "workflows.json");
@@ -151,7 +180,7 @@ describe("ProjectWorkflow runtime", () => {
     expect(reply?.text).toContain("docs/nexusos/example.md");
     expect(reply?.text).toContain("python3 -m pytest tests/nexusos PASSED");
     expect(reply?.text).toContain("Reviewer simulado: no ejecuto revision semantica real");
-    expect(reply?.text).not.toContain("Reviewer (Codex real): PASS");
+    expect(reply?.text).not.toContain("Technical Reviewer: PASS");
     expect(reply?.text).not.toContain("Review simulado aprobado");
 
     const store = await readProjectWorkflowStore(storePath);
@@ -187,7 +216,7 @@ describe("ProjectWorkflow runtime", () => {
     });
 
     expect(reply?.text).toContain("phase=completed");
-    expect(reply?.text).toContain("Reviewer (Codex real): PASS");
+    expect(reply?.text).toContain("Technical Reviewer: PASS");
     expect(reply?.text).toContain("RESULTADO: PASS");
 
     const store = await readProjectWorkflowStore(storePath);
@@ -222,7 +251,7 @@ describe("ProjectWorkflow runtime", () => {
     });
 
     expect(reply?.text).toContain("phase=review_failed");
-    expect(reply?.text).toContain("Reviewer (Codex real): FAIL");
+    expect(reply?.text).toContain("Technical Reviewer: FAIL");
     expect(reply?.text).toContain("RECOMENDACION FINAL");
 
     const store = await readProjectWorkflowStore(storePath);
@@ -250,6 +279,56 @@ describe("ProjectWorkflow runtime", () => {
     const store = await readProjectWorkflowStore(storePath);
     expect(store.workflows[0]?.status).toBe("blocked");
     expect(store.workflows[0]?.artifacts.reviewStatus).toBe("blocked");
+  });
+
+  it("completes with warnings in advisory mode when technical reviewer fails", async () => {
+    const storePath = await makeStorePath();
+    await handleProjectWorkflowReply(telegramTopicCtx("Quiero resolver X"), advisoryCfg, {
+      storePath,
+      idFactory: () => "pwf_test",
+      architectRunner: testArchitectRunner,
+    });
+
+    const reply = await handleProjectWorkflowReply(telegramTopicCtx("aprobar"), advisoryCfg, {
+      storePath,
+      implementerRunner: testImplementerRunner,
+      reviewerRunner: failReviewerRunner,
+      architectureReviewerRunner: passArchitectureReviewerRunner,
+    });
+
+    expect(reply?.text).toContain("phase=completed_with_warnings");
+    expect(reply?.text).toContain("Technical Reviewer: FAIL");
+    expect(reply?.text).toContain("Architecture Reviewer: PASS");
+
+    const store = await readProjectWorkflowStore(storePath);
+    expect(store.workflows[0]?.status).toBe("completed_with_warnings");
+    expect(store.workflows[0]?.artifacts.reviewMode).toBe("advisory");
+    expect(store.workflows[0]?.auditLog.map((event) => event.status)).toContain(
+      "completed_with_warnings",
+    );
+  });
+
+  it("fails architecture review in required mode when architecture reviewer fails", async () => {
+    const storePath = await makeStorePath();
+    await handleProjectWorkflowReply(telegramTopicCtx("Quiero resolver X"), cfg, {
+      storePath,
+      idFactory: () => "pwf_test",
+      architectRunner: testArchitectRunner,
+    });
+
+    const reply = await handleProjectWorkflowReply(telegramTopicCtx("aprobar"), cfg, {
+      storePath,
+      implementerRunner: testImplementerRunner,
+      reviewerRunner: passReviewerRunner,
+      architectureReviewerRunner: failArchitectureReviewerRunner,
+    });
+
+    expect(reply?.text).toContain("phase=architecture_review_failed");
+    expect(reply?.text).toContain("Architecture Reviewer: FAIL");
+
+    const store = await readProjectWorkflowStore(storePath);
+    expect(store.workflows[0]?.status).toBe("architecture_review_failed");
+    expect(store.workflows[0]?.artifacts.reviewMode).toBe("required");
   });
 
   it("blocks the workflow when the real implementer reports an unsafe state", async () => {

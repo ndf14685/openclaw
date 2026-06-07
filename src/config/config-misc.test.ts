@@ -101,9 +101,13 @@ describe("ProjectWorkflow config", () => {
             allowedRoots: ["docs/nexusos/"],
             deniedRoots: [".env", "secrets"],
             tests: ["python3 -m pytest tests/nexusos"],
+            review: { mode: "required" },
             reviewer: {
               enabled: true,
               timeoutMs: 300000,
+            },
+            architectureReviewer: {
+              enabled: true,
             },
           },
         },

@@ -476,7 +476,21 @@ const ProjectWorkflowsSchema = z
             tests: z.array(z.string().min(1)).optional(),
             codexCli: z.string().min(1).optional(),
             codexTimeoutMs: z.number().int().positive().optional(),
+            review: z
+              .object({
+                mode: z.union([z.literal("advisory"), z.literal("required")]).optional(),
+              })
+              .strict()
+              .optional(),
             reviewer: z
+              .object({
+                enabled: z.boolean().optional(),
+                codexCli: z.string().min(1).optional(),
+                timeoutMs: z.number().int().positive().optional(),
+              })
+              .strict()
+              .optional(),
+            architectureReviewer: z
               .object({
                 enabled: z.boolean().optional(),
                 codexCli: z.string().min(1).optional(),
