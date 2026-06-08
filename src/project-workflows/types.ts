@@ -5,10 +5,15 @@ export type ProjectWorkflowStatus =
   | "architect_failed"
   | "awaiting_human_approval"
   | "approved_for_implementation"
+  | "implementation_queued"
   | "implementer_running"
+  | "review_queued"
   | "reviewer_running"
   | "review_passed"
   | "review_failed"
+  | "architecture_review_queued"
+  | "architecture_review_running"
+  | "architecture_review_passed"
   | "architecture_review_failed"
   | "completed"
   | "completed_with_warnings"
@@ -91,6 +96,9 @@ export type ProjectWorkflowRecord = {
   auditLog: ProjectWorkflowAuditEvent[];
   createdAt: string;
   updatedAt: string;
+  phaseStartedAt?: string;
+  phaseCompletedAt?: string;
+  phaseFailedAt?: string;
 };
 
 export type ProjectWorkflowStore = {

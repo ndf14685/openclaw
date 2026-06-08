@@ -3,6 +3,20 @@
 Project Workflow long-running phases must not block the Telegram request/response cycle.
 Telegram delivery is a user experience path; Architect, Implementer, and Reviewer execution are job paths with their own timeouts and recovery rules.
 
+## Gateway Worker
+
+Project Workflow now runs through an internal gateway worker after startup sidecars are ready. The worker is connected as a gateway lifetime sidecar and stops during normal gateway shutdown.
+
+Defaults:
+
+- `pollIntervalMs`: 5000
+- `architect.timeoutMs`: 300000
+- `implementer.timeoutMs`: 1800000
+- `reviewer.timeoutMs`: 300000
+- `architectureReviewer.timeoutMs`: 300000
+
+The worker calls `processProjectWorkflowQueue(...)` on each tick. It skips overlapping ticks and claims each queued phase by writing the corresponding `*_running` state before executing external tools. Notification payloads are sent back to the persisted Telegram route using durable message delivery.
+
 ## Phase Async 1: Architect
 
 In the first async phase, only Architect execution is moved out of the Telegram handler.
@@ -50,7 +64,7 @@ architect_queued
   -> architect_failed
 ```
 
-The worker is exported and covered by tests, but it is not wired to a real gateway polling interval yet. A later phase should connect it to gateway startup with a single internal poller, for example every 5000 ms.
+The worker is exported, covered by tests, and wired to gateway startup with a single internal poller. Telegram receives the initial acknowledgement immediately; the worker later notifies the same topic with the Architect proposal or an explicit error.
 
 ## Timeout Model
 
@@ -72,20 +86,71 @@ Project Workflow Architect timeout after 300 seconds.
 
 The worker claims a queued workflow by persisting `architect_running` before invoking Claude. It writes the Architect result only if the workflow still has the expected running state.
 
-This prevents duplicate completion if two worker passes observe the store around the same time. A later gateway integration should add stale-running recovery for workflows left in `architect_running` after a process crash.
+This prevents duplicate completion if two worker passes observe the store around the same time. Gateway integration includes stale-running recovery for workflows left in `architect_running`, `implementer_running`, `reviewer_running`, or `architecture_review_running` after a process crash. The first recovery policy is conservative: stale running phases are failed or blocked with an explicit reason; the worker does not automatically re-run them.
 
-## Future Phases
+## Async Implementation And Review
 
-Phase Async 1 intentionally does not change approval, implementation, or review execution.
+Approval no longer runs Codex inline. When the operator sends `aprobar`, OpenClaw persists:
 
-Planned phases:
+```text
+awaiting_human_approval
+  -> implementation_queued
+```
 
-1. Implementer async after human approval.
-2. Technical Reviewer async after Implementer completion.
-3. Architecture Reviewer async when configured.
-4. Gateway poller integration with restart recovery and stale job handling.
+and replies immediately:
+
+```text
+[Workflow]
+workflow_id=...
+phase=implementation_queued
+project=<projectId>
+
+Workflow aprobado. Implementer en ejecucion.
+```
+
+The worker then advances the remaining phases:
+
+```text
+implementation_queued
+  -> implementer_running
+  -> review_queued | blocked
+
+review_queued
+  -> reviewer_running
+  -> review_passed | review_failed | blocked
+
+architecture_review_queued
+  -> architecture_review_running
+  -> architecture_review_passed | architecture_review_failed | blocked
+```
+
+Architecture review is queued only when configured. In `review.mode: required`, a technical review FAIL prevents the architecture reviewer from running and the workflow ends as `review_failed`. In `review.mode: advisory`, reviewers still run and failures are recorded as warnings when possible.
 
 Review policy remains supported:
 
 - `review.mode: required` blocks completion on required review failure.
 - `review.mode: advisory` records failures and completes as `completed_with_warnings` when appropriate.
+
+## Configuration
+
+Project Workflow remains OAuth-first for Claude. Do not configure API keys or `ANTHROPIC_API_KEY` for this path.
+
+Optional future-facing configuration is accepted under:
+
+```yaml
+project_workflows:
+  asyncExecution:
+    enabled: true
+    pollIntervalMs: 5000
+    architect:
+      timeoutMs: 300000
+      staleMs: 300000
+    implementer:
+      timeoutMs: 1800000
+    reviewer:
+      timeoutMs: 300000
+    architectureReviewer:
+      timeoutMs: 300000
+```
+
+Deployment remains manual unless explicitly requested. Commit/push can be automated after tests, build, and checks pass.

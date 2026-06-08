@@ -449,8 +449,26 @@ const CommitmentsSchema = z
   .strict()
   .optional();
 
+const ProjectWorkflowAsyncPhaseSchema = z
+  .object({
+    timeoutMs: z.number().int().positive().optional(),
+    staleMs: z.number().int().positive().optional(),
+  })
+  .strict();
+
 const ProjectWorkflowsSchema = z
   .object({
+    asyncExecution: z
+      .object({
+        enabled: z.boolean().optional(),
+        pollIntervalMs: z.number().int().positive().optional(),
+        architect: ProjectWorkflowAsyncPhaseSchema.optional(),
+        implementer: ProjectWorkflowAsyncPhaseSchema.optional(),
+        reviewer: ProjectWorkflowAsyncPhaseSchema.optional(),
+        architectureReviewer: ProjectWorkflowAsyncPhaseSchema.optional(),
+      })
+      .strict()
+      .optional(),
     pilots: z
       .array(
         z

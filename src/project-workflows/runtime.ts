@@ -23,8 +23,9 @@ import type {
 const execFileAsync = promisify(execFile);
 const DEFAULT_CLAUDE_ARCHITECT_TIMEOUT_MS = 300_000;
 const CLAUDE_ARCHITECT_MAX_BUFFER = 64 * 1024;
-const CODEX_IMPLEMENTER_TIMEOUT_MS = 300_000;
+const CODEX_IMPLEMENTER_TIMEOUT_MS = 1_800_000;
 const CODEX_REVIEWER_TIMEOUT_MS = 300_000;
+const PROJECT_WORKFLOW_DEFAULT_POLL_INTERVAL_MS = 5_000;
 const IMPLEMENTER_MAX_BUFFER = 256 * 1024;
 
 const DEFAULT_PILOT: Required<ProjectWorkflowPilotConfig> = {
@@ -111,6 +112,11 @@ type ReviewerResult = {
 };
 
 type ResolvedProjectWorkflowProjectConfig = ProjectWorkflowProjectConfig & { projectId: string };
+
+export type ProjectWorkflowQueueMessage = {
+  route: ProjectWorkflowRoute;
+  payload: ReplyPayload;
+};
 
 export type ProjectWorkflowRuntimeOptions = {
   storePath?: string;
@@ -322,6 +328,7 @@ function completeArchitectProposal(
   workflow.currentCapability = "architect";
   workflow.artifacts.architectProposal = architectProposal;
   workflow.updatedAt = at;
+  workflow.phaseCompletedAt = at;
   appendAudit(workflow, "awaiting_human_approval", "Esperando aprobacion humana.", at);
 }
 
@@ -331,6 +338,7 @@ function failArchitect(workflow: ProjectWorkflowRecord, errorMessage: string, at
   workflow.currentCapability = "architect";
   workflow.artifacts.architectError = errorMessage;
   workflow.updatedAt = at;
+  workflow.phaseFailedAt = at;
   appendAudit(workflow, "architect_failed", errorMessage, at);
 }
 
@@ -949,14 +957,7 @@ function applyImplementerResult(
   workflow.artifacts.diffStat = result.diffStat;
   workflow.artifacts.tests = result.tests;
   workflow.updatedAt = at;
-
-  appendAudit(workflow, "approved_for_implementation", "Aprobacion humana registrada.", at);
-  appendAudit(
-    workflow,
-    "implementer_running",
-    "Codex Implementer real ejecutado en worktree controlado.",
-    at,
-  );
+  workflow.phaseCompletedAt = at;
 
   if (result.status === "blocked") {
     workflow.status = "blocked";
@@ -966,9 +967,10 @@ function applyImplementerResult(
     return;
   }
 
-  workflow.status = "reviewer_running";
+  workflow.status = "review_queued";
   workflow.phase = "reviewer";
   workflow.currentCapability = "reviewer";
+  appendAudit(workflow, "review_queued", "Technical Reviewer encolado para ejecucion async.", at);
 }
 
 function applyReviewerArtifacts(
@@ -1032,12 +1034,6 @@ function finalizeReviewPolicy(params: {
   workflow.phase = "result";
   workflow.currentCapability = "reviewer";
 
-  appendReviewAudit(
-    workflow,
-    "reviewer_running",
-    "Technical Reviewer ejecutado despues del implementer.",
-    at,
-  );
   if (technicalReview.status === "passed" || technicalReview.status === "simulated") {
     appendReviewAudit(
       workflow,
@@ -1056,7 +1052,12 @@ function finalizeReviewPolicy(params: {
 
   if (architectureReview.status !== "skipped") {
     if (architectureReview.status === "passed" || architectureReview.status === "simulated") {
-      appendReviewAudit(workflow, "review_passed", "Architecture Reviewer aprobo.", at);
+      appendReviewAudit(
+        workflow,
+        "architecture_review_passed",
+        "Architecture Reviewer aprobo.",
+        at,
+      );
     } else {
       appendReviewAudit(
         workflow,
@@ -1162,6 +1163,14 @@ function formatApprovalReply(workflow: ProjectWorkflowRecord): ReplyPayload {
     text: `${formatWorkflowHeader(workflow)}\n\nArchitect (Claude):\n${
       workflow.artifacts.architectProposal ?? "Propuesta generada."
     }\n\n¿Aprobar?\n\nComandos: aprobar | rechazar | cancelar | estado`,
+  };
+}
+
+function formatImplementationQueuedReply(workflow: ProjectWorkflowRecord): ReplyPayload {
+  return {
+    text: [formatWorkflowHeader(workflow), "", "Workflow aprobado. Implementer en ejecucion."].join(
+      "\n",
+    ),
   };
 }
 
@@ -1281,27 +1290,32 @@ function formatBlockedReply(workflow: ProjectWorkflowRecord): ReplyPayload {
 }
 
 function formatReviewFailedReply(workflow: ProjectWorkflowRecord): ReplyPayload {
+  const architectureFailed = workflow.status === "architecture_review_failed";
   return {
     text: [
       formatWorkflowHeader(workflow),
       "",
-      workflow.status === "architecture_review_failed"
-        ? "Architecture Reviewer: FAIL"
-        : "Technical Reviewer: FAIL",
-      workflow.status === "architecture_review_failed"
+      architectureFailed ? "Architecture Reviewer: FAIL" : "Technical Reviewer: FAIL",
+      architectureFailed
         ? (workflow.artifacts.architectureReviewSummary ?? "Architecture Reviewer reporto FAIL.")
         : (workflow.artifacts.reviewSummary ?? "Reviewer real reporto FAIL."),
       "",
       "Recomendacion:",
-      workflow.artifacts.reviewRecommendation ?? "corregir",
+      (architectureFailed
+        ? workflow.artifacts.architectureReviewRecommendation
+        : workflow.artifacts.reviewRecommendation) ?? "corregir",
       "",
       "Artifacts:",
       workflow.artifacts.artifactDir ?? "no registrado",
       "",
       "Stdout:",
-      workflow.artifacts.reviewStdoutPath ?? "no registrado",
+      (architectureFailed
+        ? workflow.artifacts.architectureReviewStdoutPath
+        : workflow.artifacts.reviewStdoutPath) ?? "no registrado",
       "Stderr:",
-      workflow.artifacts.reviewStderrPath ?? "no registrado",
+      (architectureFailed
+        ? workflow.artifacts.architectureReviewStderrPath
+        : workflow.artifacts.reviewStderrPath) ?? "no registrado",
     ].join("\n"),
   };
 }
@@ -1327,19 +1341,516 @@ function findActiveWorkflow(
 export type ProjectWorkflowQueueResult = {
   processed: number;
   replies: ReplyPayload[];
+  messages: ProjectWorkflowQueueMessage[];
 };
+
+export function resolveProjectWorkflowPollIntervalMs(cfg: OpenClawConfig): number {
+  const raw = cfg.project_workflows?.asyncExecution?.pollIntervalMs;
+  return typeof raw === "number" && Number.isFinite(raw) && raw > 0
+    ? Math.floor(raw)
+    : PROJECT_WORKFLOW_DEFAULT_POLL_INTERVAL_MS;
+}
+
+function resolveConfiguredTimeoutMs(value: number | undefined, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? Math.floor(value)
+    : fallback;
+}
+
+function resolveArchitectTimeoutMs(cfg: OpenClawConfig): number {
+  return resolveConfiguredTimeoutMs(
+    cfg.project_workflows?.asyncExecution?.architect?.timeoutMs,
+    resolveClaudeArchitectTimeoutMs(),
+  );
+}
+
+function resolvePhaseStaleMs(
+  cfg: OpenClawConfig,
+  phase: "architect" | "implementer" | "reviewer" | "architectureReviewer",
+): number {
+  const asyncConfig = cfg.project_workflows?.asyncExecution;
+  const fallback =
+    phase === "architect"
+      ? resolveArchitectTimeoutMs(cfg)
+      : phase === "implementer"
+        ? resolveConfiguredTimeoutMs(
+            asyncConfig?.implementer?.timeoutMs,
+            CODEX_IMPLEMENTER_TIMEOUT_MS,
+          )
+        : phase === "reviewer"
+          ? resolveConfiguredTimeoutMs(asyncConfig?.reviewer?.timeoutMs, CODEX_REVIEWER_TIMEOUT_MS)
+          : resolveConfiguredTimeoutMs(
+              asyncConfig?.architectureReviewer?.timeoutMs,
+              CODEX_REVIEWER_TIMEOUT_MS,
+            );
+  const explicit =
+    phase === "architect"
+      ? asyncConfig?.architect?.staleMs
+      : phase === "implementer"
+        ? asyncConfig?.implementer?.staleMs
+        : phase === "reviewer"
+          ? asyncConfig?.reviewer?.staleMs
+          : asyncConfig?.architectureReviewer?.staleMs;
+  return resolveConfiguredTimeoutMs(explicit, fallback);
+}
+
+function isWorkflowStale(workflow: ProjectWorkflowRecord, nowMs: number, staleMs: number): boolean {
+  const raw = workflow.phaseStartedAt ?? workflow.updatedAt;
+  const startedMs = Date.parse(raw);
+  return Number.isFinite(startedMs) && nowMs - startedMs > staleMs;
+}
+
+function markRunningWorkflowStale(
+  workflow: ProjectWorkflowRecord,
+  cfg: OpenClawConfig,
+  at: string,
+): ReplyPayload | undefined {
+  const nowMs = Date.parse(at);
+  if (workflow.status === "architect_running") {
+    const staleMs = resolvePhaseStaleMs(cfg, "architect");
+    if (!isWorkflowStale(workflow, nowMs, staleMs)) {
+      return undefined;
+    }
+    failArchitect(workflow, formatArchitectTimeoutMessage(staleMs), at);
+    return formatArchitectFailedReply(workflow);
+  }
+  if (workflow.status === "implementer_running") {
+    const staleMs = resolvePhaseStaleMs(cfg, "implementer");
+    if (!isWorkflowStale(workflow, nowMs, staleMs)) {
+      return undefined;
+    }
+    workflow.status = "blocked";
+    workflow.phase = "result";
+    workflow.currentCapability = "implementer";
+    workflow.updatedAt = at;
+    workflow.phaseFailedAt = at;
+    workflow.artifacts.blockedReason =
+      "Project Workflow Implementer failed: stale running phase after " +
+      Math.ceil(staleMs / 1000) +
+      " seconds.";
+    appendAudit(workflow, "blocked", workflow.artifacts.blockedReason, at);
+    return formatBlockedReply(workflow);
+  }
+  if (workflow.status === "reviewer_running") {
+    const staleMs = resolvePhaseStaleMs(cfg, "reviewer");
+    if (!isWorkflowStale(workflow, nowMs, staleMs)) {
+      return undefined;
+    }
+    workflow.status = "blocked";
+    workflow.phase = "result";
+    workflow.currentCapability = "reviewer";
+    workflow.updatedAt = at;
+    workflow.phaseFailedAt = at;
+    workflow.artifacts.reviewStatus = "blocked";
+    workflow.artifacts.blockedReason =
+      "Project Workflow Reviewer failed: stale running phase after " +
+      Math.ceil(staleMs / 1000) +
+      " seconds.";
+    appendAudit(workflow, "blocked", workflow.artifacts.blockedReason, at);
+    return formatBlockedReply(workflow);
+  }
+  if (workflow.status === "architecture_review_running") {
+    const staleMs = resolvePhaseStaleMs(cfg, "architectureReviewer");
+    if (!isWorkflowStale(workflow, nowMs, staleMs)) {
+      return undefined;
+    }
+    workflow.status = "blocked";
+    workflow.phase = "result";
+    workflow.currentCapability = "reviewer";
+    workflow.updatedAt = at;
+    workflow.phaseFailedAt = at;
+    workflow.artifacts.architectureReviewStatus = "blocked";
+    workflow.artifacts.blockedReason =
+      "Project Workflow Architecture Reviewer failed: stale running phase after " +
+      Math.ceil(staleMs / 1000) +
+      " seconds.";
+    appendAudit(workflow, "blocked", workflow.artifacts.blockedReason, at);
+    return formatBlockedReply(workflow);
+  }
+  return undefined;
+}
+
+export async function recoverStaleProjectWorkflows(
+  cfg: OpenClawConfig,
+  opts: Pick<ProjectWorkflowRuntimeOptions, "storePath" | "now"> = {},
+): Promise<ProjectWorkflowQueueResult> {
+  if (cfg.project_workflows_enabled !== true) {
+    return { processed: 0, replies: [], messages: [] };
+  }
+  const storePath = opts.storePath ?? resolveProjectWorkflowStorePath();
+  const nowFactory = opts.now ?? (() => new Date());
+  const replies: ReplyPayload[] = [];
+  const messages: ProjectWorkflowQueueMessage[] = [];
+  const processed = await updateProjectWorkflowStore((store) => {
+    let count = 0;
+    const at = nowFactory().toISOString();
+    for (const workflow of store.workflows) {
+      const reply = markRunningWorkflowStale(workflow, cfg, at);
+      if (reply) {
+        count += 1;
+        replies.push(reply);
+        messages.push({ route: workflow.route, payload: reply });
+      }
+    }
+    return count;
+  }, storePath);
+  return { processed, replies, messages };
+}
+
+type WorkflowClaim = {
+  workflowId: string;
+  projectId: string;
+  route: ProjectWorkflowRoute;
+};
+
+type ArchitectClaim = WorkflowClaim & {
+  goal: string;
+};
+
+type ImplementationClaim = WorkflowClaim & {
+  workflow: ProjectWorkflowRecord;
+};
+
+type ReviewClaim = WorkflowClaim & {
+  workflow: ProjectWorkflowRecord;
+  implementerResult: ImplementerResult;
+};
+
+function cloneWorkflow(workflow: ProjectWorkflowRecord): ProjectWorkflowRecord {
+  return structuredClone(workflow);
+}
+
+function implementerResultFromArtifacts(workflow: ProjectWorkflowRecord): ImplementerResult {
+  return {
+    status: workflow.artifacts.implementerStatus ?? "blocked",
+    summary: workflow.artifacts.implementationSummary ?? "Implementer sin resumen registrado.",
+    blockedReason: workflow.artifacts.blockedReason,
+    artifactDir: workflow.artifacts.artifactDir ?? defaultArtifactRoot(workflow.workflowId),
+    worktreePath: workflow.artifacts.worktreePath,
+    branchName: workflow.artifacts.branchName,
+    changedFiles: workflow.artifacts.changedFiles ?? [],
+    diffStat: workflow.artifacts.diffStat,
+    tests: workflow.artifacts.tests ?? [],
+  };
+}
+
+function skippedArchitectureReview(workflow: ProjectWorkflowRecord): ReviewerResult {
+  return {
+    status: "skipped",
+    summary: "Architecture Reviewer no configurado o no requerido para esta transicion.",
+    artifactDir: workflow.artifacts.artifactDir ?? defaultArtifactRoot(workflow.workflowId),
+  };
+}
+
+function shouldQueueArchitectureReview(params: {
+  project: ResolvedProjectWorkflowProjectConfig;
+  mode: ReviewMode;
+  technicalReview: ReviewerResult;
+}): boolean {
+  if (params.project.architectureReviewer?.enabled !== true) {
+    return false;
+  }
+  if (params.technicalReview.status === "blocked") {
+    return false;
+  }
+  if (params.mode === "required" && params.technicalReview.status === "failed") {
+    return false;
+  }
+  return true;
+}
+
+async function claimImplementationQueued(
+  storePath: string,
+  nowFactory: () => Date,
+): Promise<ImplementationClaim | undefined> {
+  return await updateProjectWorkflowStore((store) => {
+    const queued = store.workflows
+      .filter((workflow) => workflow.status === "implementation_queued")
+      .toSorted((a, b) => a.updatedAt.localeCompare(b.updatedAt))[0];
+    if (!queued) {
+      return undefined;
+    }
+    const at = nowFactory().toISOString();
+    queued.status = "implementer_running";
+    queued.phase = "implementer";
+    queued.currentCapability = "implementer";
+    queued.updatedAt = at;
+    queued.phaseStartedAt = at;
+    appendAudit(
+      queued,
+      "implementer_running",
+      "Codex Implementer real iniciado en worktree controlado.",
+      at,
+    );
+    return {
+      workflowId: queued.workflowId,
+      projectId: queued.projectId,
+      route: queued.route,
+      workflow: cloneWorkflow(queued),
+    };
+  }, storePath);
+}
+
+async function runClaimedImplementation(
+  claim: ImplementationClaim,
+  cfg: OpenClawConfig,
+  opts: ProjectWorkflowRuntimeOptions,
+  storePath: string,
+  nowFactory: () => Date,
+): Promise<ProjectWorkflowQueueMessage | undefined> {
+  const project = resolveProjectConfig(cfg, claim.projectId);
+  if (!project) {
+    const reply = await updateProjectWorkflowStore((store) => {
+      const workflow = store.workflows.find(
+        (candidate) =>
+          candidate.workflowId === claim.workflowId && candidate.status === "implementer_running",
+      );
+      if (!workflow) {
+        return undefined;
+      }
+      applyImplementerResult(
+        workflow,
+        {
+          status: "blocked",
+          summary: "No hay configuracion de proyecto para ejecutar Implementer.",
+          blockedReason: "missing project_workflows.projects entry for " + claim.projectId,
+          artifactDir: defaultArtifactRoot(claim.workflowId),
+          changedFiles: [],
+          tests: [],
+        },
+        nowFactory().toISOString(),
+      );
+      return formatBlockedReply(workflow);
+    }, storePath);
+    return reply ? { route: claim.route, payload: reply } : undefined;
+  }
+
+  let result: ImplementerResult;
+  try {
+    result = await (opts.implementerRunner ?? runCodexImplementer)({
+      workflow: claim.workflow,
+      project,
+    });
+  } catch (error) {
+    result = {
+      status: "blocked",
+      summary: "Project Workflow Implementer failed: " + formatExecError(error),
+      blockedReason: "Project Workflow Implementer failed: " + formatExecError(error),
+      artifactDir: defaultArtifactRoot(claim.workflowId),
+      changedFiles: [],
+      tests: [],
+    };
+  }
+
+  const reply = await updateProjectWorkflowStore((store) => {
+    const workflow = store.workflows.find(
+      (candidate) =>
+        candidate.workflowId === claim.workflowId && candidate.status === "implementer_running",
+    );
+    if (!workflow) {
+      return undefined;
+    }
+    applyImplementerResult(workflow, result, nowFactory().toISOString());
+    return result.status === "blocked" ? formatBlockedReply(workflow) : undefined;
+  }, storePath);
+  return reply ? { route: claim.route, payload: reply } : undefined;
+}
+
+async function claimReviewQueued(
+  storePath: string,
+  nowFactory: () => Date,
+): Promise<ReviewClaim | undefined> {
+  return await updateProjectWorkflowStore((store) => {
+    const queued = store.workflows
+      .filter((workflow) => workflow.status === "review_queued")
+      .toSorted((a, b) => a.updatedAt.localeCompare(b.updatedAt))[0];
+    if (!queued) {
+      return undefined;
+    }
+    const at = nowFactory().toISOString();
+    queued.status = "reviewer_running";
+    queued.phase = "reviewer";
+    queued.currentCapability = "reviewer";
+    queued.updatedAt = at;
+    queued.phaseStartedAt = at;
+    appendAudit(queued, "reviewer_running", "Technical Reviewer async iniciado.", at);
+    return {
+      workflowId: queued.workflowId,
+      projectId: queued.projectId,
+      route: queued.route,
+      workflow: cloneWorkflow(queued),
+      implementerResult: implementerResultFromArtifacts(queued),
+    };
+  }, storePath);
+}
+
+async function runClaimedReview(
+  claim: ReviewClaim,
+  cfg: OpenClawConfig,
+  opts: ProjectWorkflowRuntimeOptions,
+  storePath: string,
+  nowFactory: () => Date,
+): Promise<ProjectWorkflowQueueMessage | undefined> {
+  const project = resolveProjectConfig(cfg, claim.projectId);
+  if (!project) {
+    return undefined;
+  }
+  let review: ReviewerResult;
+  try {
+    review = await (opts.reviewerRunner ?? defaultReviewerRunner)({
+      workflow: claim.workflow,
+      project,
+      implementerResult: claim.implementerResult,
+    });
+  } catch (error) {
+    review = {
+      status: "blocked",
+      summary: "Project Workflow Reviewer failed: " + formatExecError(error),
+      blockedReason: "Project Workflow Reviewer failed: " + formatExecError(error),
+      artifactDir: claim.implementerResult.artifactDir,
+    };
+  }
+
+  const reply = await updateProjectWorkflowStore((store) => {
+    const workflow = store.workflows.find(
+      (candidate) =>
+        candidate.workflowId === claim.workflowId && candidate.status === "reviewer_running",
+    );
+    if (!workflow) {
+      return undefined;
+    }
+    const at = nowFactory().toISOString();
+    applyReviewerArtifacts(workflow, review, at);
+    const mode = resolveReviewMode(project);
+    if (shouldQueueArchitectureReview({ project, mode, technicalReview: review })) {
+      workflow.status = "architecture_review_queued";
+      workflow.phase = "reviewer";
+      workflow.currentCapability = "reviewer";
+      workflow.updatedAt = at;
+      workflow.phaseCompletedAt = at;
+      appendAudit(
+        workflow,
+        "architecture_review_queued",
+        "Architecture Reviewer encolado para ejecucion async.",
+        at,
+      );
+      return undefined;
+    }
+    const architectureReview = skippedArchitectureReview(workflow);
+    applyArchitectureReviewArtifacts(workflow, architectureReview, at);
+    finalizeReviewPolicy({ workflow, technicalReview: review, architectureReview, mode, at });
+    return workflow.status === "blocked"
+      ? formatBlockedReply(workflow)
+      : workflow.status === "review_failed" || workflow.status === "architecture_review_failed"
+        ? formatReviewFailedReply(workflow)
+        : formatCompletedReply(workflow);
+  }, storePath);
+  return reply ? { route: claim.route, payload: reply } : undefined;
+}
+
+async function claimArchitectureReviewQueued(
+  storePath: string,
+  nowFactory: () => Date,
+): Promise<ReviewClaim | undefined> {
+  return await updateProjectWorkflowStore((store) => {
+    const queued = store.workflows
+      .filter((workflow) => workflow.status === "architecture_review_queued")
+      .toSorted((a, b) => a.updatedAt.localeCompare(b.updatedAt))[0];
+    if (!queued) {
+      return undefined;
+    }
+    const at = nowFactory().toISOString();
+    queued.status = "architecture_review_running";
+    queued.phase = "reviewer";
+    queued.currentCapability = "reviewer";
+    queued.updatedAt = at;
+    queued.phaseStartedAt = at;
+    appendAudit(queued, "architecture_review_running", "Architecture Reviewer async iniciado.", at);
+    return {
+      workflowId: queued.workflowId,
+      projectId: queued.projectId,
+      route: queued.route,
+      workflow: cloneWorkflow(queued),
+      implementerResult: implementerResultFromArtifacts(queued),
+    };
+  }, storePath);
+}
+
+async function runClaimedArchitectureReview(
+  claim: ReviewClaim,
+  cfg: OpenClawConfig,
+  opts: ProjectWorkflowRuntimeOptions,
+  storePath: string,
+  nowFactory: () => Date,
+): Promise<ProjectWorkflowQueueMessage | undefined> {
+  const project = resolveProjectConfig(cfg, claim.projectId);
+  if (!project) {
+    return undefined;
+  }
+  let architectureReview: ReviewerResult;
+  try {
+    architectureReview = await (
+      opts.architectureReviewerRunner ?? defaultArchitectureReviewerRunner
+    )({
+      workflow: claim.workflow,
+      project,
+      implementerResult: claim.implementerResult,
+    });
+  } catch (error) {
+    architectureReview = {
+      status: "blocked",
+      summary: "Project Workflow Architecture Reviewer failed: " + formatExecError(error),
+      blockedReason: "Project Workflow Architecture Reviewer failed: " + formatExecError(error),
+      artifactDir: claim.implementerResult.artifactDir,
+    };
+  }
+
+  const reply = await updateProjectWorkflowStore((store) => {
+    const workflow = store.workflows.find(
+      (candidate) =>
+        candidate.workflowId === claim.workflowId &&
+        candidate.status === "architecture_review_running",
+    );
+    if (!workflow) {
+      return undefined;
+    }
+    const at = nowFactory().toISOString();
+    const technicalReview: ReviewerResult = {
+      status: workflow.artifacts.reviewStatus ?? "skipped",
+      summary: workflow.artifacts.reviewSummary ?? "Technical Reviewer sin resumen registrado.",
+      recommendation: workflow.artifacts.reviewRecommendation,
+      artifactDir: workflow.artifacts.artifactDir ?? defaultArtifactRoot(workflow.workflowId),
+      blockedReason: workflow.artifacts.blockedReason,
+    };
+    applyArchitectureReviewArtifacts(workflow, architectureReview, at);
+    finalizeReviewPolicy({
+      workflow,
+      technicalReview,
+      architectureReview,
+      mode: resolveReviewMode(project),
+      at,
+    });
+    return workflow.status === "blocked"
+      ? formatBlockedReply(workflow)
+      : workflow.status === "review_failed" || workflow.status === "architecture_review_failed"
+        ? formatReviewFailedReply(workflow)
+        : formatCompletedReply(workflow);
+  }, storePath);
+  return reply ? { route: claim.route, payload: reply } : undefined;
+}
 
 export async function processProjectWorkflowQueue(
   cfg: OpenClawConfig,
   opts: ProjectWorkflowRuntimeOptions = {},
 ): Promise<ProjectWorkflowQueueResult> {
   if (cfg.project_workflows_enabled !== true) {
-    return { processed: 0, replies: [] };
+    return { processed: 0, replies: [], messages: [] };
   }
   const storePath = opts.storePath ?? resolveProjectWorkflowStorePath();
   const nowFactory = opts.now ?? (() => new Date());
   const architectRunner = opts.architectRunner ?? runClaudeArchitect;
   const replies: ReplyPayload[] = [];
+  const messages: ProjectWorkflowQueueMessage[] = [];
   let processed = 0;
 
   while (true) {
@@ -1355,8 +1866,14 @@ export async function processProjectWorkflowQueue(
       queued.phase = "architect";
       queued.currentCapability = "architect";
       queued.updatedAt = at;
+      queued.phaseStartedAt = at;
       appendAudit(queued, "architect_running", "Architect async iniciado.", at);
-      return { workflowId: queued.workflowId, goal: queued.goal, projectId: queued.projectId };
+      return {
+        workflowId: queued.workflowId,
+        goal: queued.goal,
+        projectId: queued.projectId,
+        route: queued.route,
+      };
     }, storePath);
 
     if (!claim) {
@@ -1364,7 +1881,7 @@ export async function processProjectWorkflowQueue(
     }
 
     processed += 1;
-    const timeoutMs = resolveClaudeArchitectTimeoutMs();
+    const timeoutMs = resolveArchitectTimeoutMs(cfg);
     try {
       const proposal = await architectRunner({
         goal: claim.goal,
@@ -1384,6 +1901,7 @@ export async function processProjectWorkflowQueue(
       }, storePath);
       if (reply) {
         replies.push(reply);
+        messages.push({ route: claim.route, payload: reply });
       }
     } catch (error) {
       const message = isTimeoutError(error)
@@ -1402,11 +1920,51 @@ export async function processProjectWorkflowQueue(
       }, storePath);
       if (reply) {
         replies.push(reply);
+        messages.push({ route: claim.route, payload: reply });
       }
     }
   }
 
-  return { processed, replies };
+  while (true) {
+    const claim = await claimImplementationQueued(storePath, nowFactory);
+    if (!claim) {
+      break;
+    }
+    processed += 1;
+    const reply = await runClaimedImplementation(claim, cfg, opts, storePath, nowFactory);
+    if (reply) {
+      replies.push(reply.payload);
+      messages.push(reply);
+    }
+  }
+
+  while (true) {
+    const claim = await claimReviewQueued(storePath, nowFactory);
+    if (!claim) {
+      break;
+    }
+    processed += 1;
+    const reply = await runClaimedReview(claim, cfg, opts, storePath, nowFactory);
+    if (reply) {
+      replies.push(reply.payload);
+      messages.push(reply);
+    }
+  }
+
+  while (true) {
+    const claim = await claimArchitectureReviewQueued(storePath, nowFactory);
+    if (!claim) {
+      break;
+    }
+    processed += 1;
+    const reply = await runClaimedArchitectureReview(claim, cfg, opts, storePath, nowFactory);
+    if (reply) {
+      replies.push(reply.payload);
+      messages.push(reply);
+    }
+  }
+
+  return { processed, replies, messages };
 }
 
 export async function handleProjectWorkflowReply(
@@ -1483,56 +2041,19 @@ export async function handleProjectWorkflowReply(
       if (active.status !== "awaiting_human_approval") {
         return formatStatusReply(active);
       }
-      const project = resolveProjectConfig(cfg, active.projectId);
-      if (!project) {
-        applyImplementerResult(
-          active,
-          {
-            status: "blocked",
-            summary: "No hay configuracion de proyecto para ejecutar Implementer.",
-            blockedReason: "missing project_workflows.projects entry for " + active.projectId,
-            artifactDir: defaultArtifactRoot(active.workflowId),
-            changedFiles: [],
-            tests: [],
-          },
-          now,
-        );
-        return formatBlockedReply(active);
-      }
-      const result = await (opts.implementerRunner ?? runCodexImplementer)({
-        workflow: active,
-        project,
-      });
-      applyImplementerResult(active, result, now);
-      if (result.status === "blocked") {
-        return formatBlockedReply(active);
-      }
-      const review = await (opts.reviewerRunner ?? defaultReviewerRunner)({
-        workflow: active,
-        project,
-        implementerResult: result,
-      });
-      const architectureReview = await (
-        opts.architectureReviewerRunner ?? defaultArchitectureReviewerRunner
-      )({
-        workflow: active,
-        project,
-        implementerResult: result,
-      });
-      applyReviewerArtifacts(active, review, now);
-      applyArchitectureReviewArtifacts(active, architectureReview, now);
-      finalizeReviewPolicy({
-        workflow: active,
-        technicalReview: review,
-        architectureReview,
-        mode: resolveReviewMode(project),
-        at: now,
-      });
-      return active.status === "blocked"
-        ? formatBlockedReply(active)
-        : active.status === "review_failed" || active.status === "architecture_review_failed"
-          ? formatReviewFailedReply(active)
-          : formatCompletedReply(active);
+      active.status = "implementation_queued";
+      active.phase = "implementer";
+      active.currentCapability = "implementer";
+      active.updatedAt = now;
+      active.phaseStartedAt = now;
+      appendAudit(active, "approved_for_implementation", "Aprobacion humana registrada.", now);
+      appendAudit(
+        active,
+        "implementation_queued",
+        "Implementer encolado para ejecucion async.",
+        now,
+      );
+      return formatImplementationQueuedReply(active);
     }
 
     const workflow = createQueuedWorkflow({

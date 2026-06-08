@@ -416,3 +416,17 @@ project topic goal before any real workflow engine is connected.
 - This ADR does not change provider bindings.
 - This ADR does not restart, reload, or require the Gateway.
 - This ADR does not migrate existing sessions, crons, or topic bindings.
+
+## Async Runtime Update
+
+The gateway runtime now connects a Project Workflow worker after startup sidecars are ready. Long-running phases are persisted and processed out of band from the Telegram request/response cycle. See [Project Workflow Async Execution](../project-workflows/async-execution.md).
+
+Async states added by the runtime path include:
+
+- `architect_queued`, `architect_running`, `architect_failed`;
+- `implementation_queued`, `implementer_running`;
+- `review_queued`, `reviewer_running`, `review_passed`, `review_failed`;
+- `architecture_review_queued`, `architecture_review_running`, `architecture_review_passed`, `architecture_review_failed`;
+- `completed_with_warnings` for advisory review failures.
+
+The worker uses conservative stale recovery: running phases older than their configured threshold are marked failed or blocked and are not re-executed automatically.

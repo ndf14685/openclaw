@@ -3,8 +3,13 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
-import { handleProjectWorkflowReply, processProjectWorkflowQueue } from "./runtime.js";
-import { readProjectWorkflowStore } from "./store.js";
+import {
+  handleProjectWorkflowReply,
+  processProjectWorkflowQueue,
+  recoverStaleProjectWorkflows,
+} from "./runtime.js";
+import { readProjectWorkflowStore, updateProjectWorkflowStore } from "./store.js";
+import { resetProjectWorkflowWorkerForTest, startProjectWorkflowWorker } from "./worker.js";
 
 const cfg = {
   project_workflows_enabled: true,
@@ -38,6 +43,7 @@ const advisoryCfg = {
       "idp-platform": {
         ...cfg.project_workflows.projects["idp-platform"],
         review: { mode: "advisory" as const },
+        architectureReviewer: { enabled: true },
       },
     },
   },
@@ -145,6 +151,24 @@ async function queueAndProcessArchitect(
     now: () => new Date("2026-06-06T00:00:30.000Z"),
     architectRunner: testArchitectRunner,
   });
+}
+
+async function approveAndProcess(
+  storePath: string,
+  config: OpenClawConfig = cfg,
+  runners: Partial<Parameters<typeof processProjectWorkflowQueue>[1]> = {},
+) {
+  const approval = await handleProjectWorkflowReply(telegramTopicCtx("aprobar"), config, {
+    storePath,
+    now: () => new Date("2026-06-06T00:01:00.000Z"),
+  });
+  const result = await processProjectWorkflowQueue(config, {
+    storePath,
+    now: () => new Date("2026-06-06T00:01:30.000Z"),
+    implementerRunner: testImplementerRunner,
+    ...runners,
+  });
+  return { approval, result, reply: result.replies.at(-1) };
 }
 
 describe("ProjectWorkflow runtime", () => {
@@ -313,12 +337,10 @@ describe("ProjectWorkflow runtime", () => {
     const storePath = await makeStorePath();
     await queueAndProcessArchitect(storePath);
 
-    const reply = await handleProjectWorkflowReply(telegramTopicCtx("aprobar"), cfg, {
-      storePath,
-      now: () => new Date("2026-06-06T00:01:00.000Z"),
-      implementerRunner: testImplementerRunner,
-    });
+    const { approval, reply } = await approveAndProcess(storePath);
 
+    expect(approval?.text).toContain("phase=implementation_queued");
+    expect(approval?.text).toContain("Workflow aprobado. Implementer en ejecucion.");
     expect(reply?.text).toContain("phase=completed");
     expect(reply?.text).toContain("Implementer (Codex real)");
     expect(reply?.text).toContain("docs/nexusos/example.md");
@@ -337,7 +359,9 @@ describe("ProjectWorkflow runtime", () => {
       "architect_running",
       "awaiting_human_approval",
       "approved_for_implementation",
+      "implementation_queued",
       "implementer_running",
+      "review_queued",
       "reviewer_running",
       "review_passed",
       "completed",
@@ -348,10 +372,7 @@ describe("ProjectWorkflow runtime", () => {
     const storePath = await makeStorePath();
     await queueAndProcessArchitect(storePath);
 
-    const reply = await handleProjectWorkflowReply(telegramTopicCtx("aprobar"), cfg, {
-      storePath,
-      now: () => new Date("2026-06-06T00:01:00.000Z"),
-      implementerRunner: testImplementerRunner,
+    const { reply } = await approveAndProcess(storePath, cfg, {
       reviewerRunner: passReviewerRunner,
     });
 
@@ -370,7 +391,9 @@ describe("ProjectWorkflow runtime", () => {
       "architect_running",
       "awaiting_human_approval",
       "approved_for_implementation",
+      "implementation_queued",
       "implementer_running",
+      "review_queued",
       "reviewer_running",
       "review_passed",
       "completed",
@@ -381,9 +404,7 @@ describe("ProjectWorkflow runtime", () => {
     const storePath = await makeStorePath();
     await queueAndProcessArchitect(storePath);
 
-    const reply = await handleProjectWorkflowReply(telegramTopicCtx("aprobar"), cfg, {
-      storePath,
-      implementerRunner: testImplementerRunner,
+    const { reply } = await approveAndProcess(storePath, cfg, {
       reviewerRunner: failReviewerRunner,
     });
 
@@ -400,9 +421,7 @@ describe("ProjectWorkflow runtime", () => {
     const storePath = await makeStorePath();
     await queueAndProcessArchitect(storePath);
 
-    const reply = await handleProjectWorkflowReply(telegramTopicCtx("aprobar"), cfg, {
-      storePath,
-      implementerRunner: testImplementerRunner,
+    const { reply } = await approveAndProcess(storePath, cfg, {
       reviewerRunner: blockedReviewerRunner,
     });
 
@@ -418,9 +437,7 @@ describe("ProjectWorkflow runtime", () => {
     const storePath = await makeStorePath();
     await queueAndProcessArchitect(storePath, "Quiero resolver X", advisoryCfg);
 
-    const reply = await handleProjectWorkflowReply(telegramTopicCtx("aprobar"), advisoryCfg, {
-      storePath,
-      implementerRunner: testImplementerRunner,
+    const { reply } = await approveAndProcess(storePath, advisoryCfg, {
       reviewerRunner: failReviewerRunner,
       architectureReviewerRunner: passArchitectureReviewerRunner,
     });
@@ -441,9 +458,19 @@ describe("ProjectWorkflow runtime", () => {
     const storePath = await makeStorePath();
     await queueAndProcessArchitect(storePath);
 
-    const reply = await handleProjectWorkflowReply(telegramTopicCtx("aprobar"), cfg, {
-      storePath,
-      implementerRunner: testImplementerRunner,
+    const archCfg = {
+      ...cfg,
+      project_workflows: {
+        ...cfg.project_workflows,
+        projects: {
+          "idp-platform": {
+            ...cfg.project_workflows.projects["idp-platform"],
+            architectureReviewer: { enabled: true },
+          },
+        },
+      },
+    } satisfies OpenClawConfig;
+    const { reply } = await approveAndProcess(storePath, archCfg, {
       reviewerRunner: passReviewerRunner,
       architectureReviewerRunner: failArchitectureReviewerRunner,
     });
@@ -460,9 +487,7 @@ describe("ProjectWorkflow runtime", () => {
     const storePath = await makeStorePath();
     await queueAndProcessArchitect(storePath);
 
-    const reply = await handleProjectWorkflowReply(telegramTopicCtx("aprobar"), cfg, {
-      storePath,
-      now: () => new Date("2026-06-06T00:01:00.000Z"),
+    const { reply } = await approveAndProcess(storePath, cfg, {
       implementerRunner: blockedImplementerRunner,
     });
 
@@ -474,6 +499,90 @@ describe("ProjectWorkflow runtime", () => {
     const store = await readProjectWorkflowStore(storePath);
     expect(store.workflows[0]?.status).toBe("blocked");
     expect(store.workflows[0]?.artifacts.implementerStatus).toBe("blocked");
+  });
+
+  it("recovers stale architect_running into architect_failed", async () => {
+    const storePath = await makeStorePath();
+    await handleProjectWorkflowReply(telegramTopicCtx("Quiero resolver X"), cfg, {
+      storePath,
+      idFactory: () => "pwf_test",
+      now: () => new Date("2026-06-06T00:00:00.000Z"),
+    });
+    await updateProjectWorkflowStore((store) => {
+      const workflow = store.workflows[0];
+      if (!workflow) {
+        throw new Error("missing workflow");
+      }
+      workflow.status = "architect_running";
+      workflow.phase = "architect";
+      workflow.currentCapability = "architect";
+      workflow.updatedAt = "2026-06-06T00:00:01.000Z";
+      workflow.phaseStartedAt = "2026-06-06T00:00:01.000Z";
+      workflow.auditLog.push({
+        at: "2026-06-06T00:00:01.000Z",
+        status: "architect_running",
+        note: "Architect async iniciado.",
+      });
+    }, storePath);
+
+    const recovered = await recoverStaleProjectWorkflows(cfg, {
+      storePath,
+      now: () => new Date("2026-06-06T00:06:02.000Z"),
+    });
+
+    expect(recovered.processed).toBe(1);
+    expect(recovered.messages[0]?.payload.text).toContain("phase=architect_failed");
+    const store = await readProjectWorkflowStore(storePath);
+    expect(store.workflows[0]?.status).toBe("architect_failed");
+    expect(store.workflows[0]?.artifacts.architectError).toContain(
+      "Project Workflow Architect timeout after 300 seconds.",
+    );
+  });
+
+  it("starts the gateway worker without duplicating ticks", async () => {
+    resetProjectWorkflowWorkerForTest();
+    const sent: string[] = [];
+    let processCalls = 0;
+    let intervalCallback: (() => void) | undefined;
+    const handle = startProjectWorkflowWorker({
+      getConfig: () => cfg,
+      setIntervalFn: ((cb: () => void) => {
+        intervalCallback = cb;
+        return { unref: () => undefined } as ReturnType<typeof setInterval>;
+      }) as typeof setInterval,
+      clearIntervalFn: (() => undefined) as typeof clearInterval,
+      setImmediateFn: ((cb: () => void) => {
+        void cb();
+        return { unref: () => undefined } as ReturnType<typeof setImmediate>;
+      }) as typeof setImmediate,
+      recoverStale: async () => ({ processed: 0, replies: [], messages: [] }),
+      processQueue: async () => {
+        processCalls += 1;
+        return {
+          processed: 1,
+          replies: [{ text: "ok" }],
+          messages: [
+            {
+              route: { channel: "telegram", accountId: "default", chatId: "1", topicId: "2679" },
+              payload: { text: "ok" },
+            },
+          ],
+        };
+      },
+      sendMessage: async (_cfg, message) => {
+        sent.push(message.payload.text ?? "");
+      },
+    });
+    const duplicate = startProjectWorkflowWorker({ getConfig: () => cfg });
+    intervalCallback?.();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(duplicate).toBe(handle);
+    expect(processCalls).toBe(1);
+    expect(sent).toEqual(["ok"]);
+    handle.stop();
+    resetProjectWorkflowWorkerForTest();
   });
 
   it("stays inactive when the feature flag is disabled", async () => {

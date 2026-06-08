@@ -83,7 +83,17 @@ export type ProjectWorkflowProjectConfig = {
   architectureReviewer?: ProjectWorkflowReviewerConfig;
 };
 
+export type ProjectWorkflowAsyncExecutionConfig = {
+  enabled?: boolean;
+  pollIntervalMs?: number;
+  architect?: { timeoutMs?: number; staleMs?: number };
+  implementer?: { timeoutMs?: number; staleMs?: number };
+  reviewer?: { timeoutMs?: number; staleMs?: number };
+  architectureReviewer?: { timeoutMs?: number; staleMs?: number };
+};
+
 export type ProjectWorkflowsConfig = {
+  asyncExecution?: ProjectWorkflowAsyncExecutionConfig;
   /** Pilot routes eligible for the dry-run ProjectWorkflow runtime. */
   pilots?: ProjectWorkflowPilotConfig[];
   /** Project-specific implementation sandbox settings. */

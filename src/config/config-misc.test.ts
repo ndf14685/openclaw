@@ -93,6 +93,14 @@ describe("ProjectWorkflow config", () => {
     const result = OpenClawSchema.safeParse({
       project_workflows_enabled: true,
       project_workflows: {
+        asyncExecution: {
+          enabled: true,
+          pollIntervalMs: 5000,
+          architect: { timeoutMs: 300000, staleMs: 300000 },
+          implementer: { timeoutMs: 1800000 },
+          reviewer: { timeoutMs: 300000 },
+          architectureReviewer: { timeoutMs: 300000 },
+        },
         pilots: [{ topicId: "2679", projectId: "idp-platform" }],
         projects: {
           "idp-platform": {

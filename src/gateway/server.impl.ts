@@ -1552,6 +1552,22 @@ export async function startGatewayServer(
         runtimeState.heartbeatRunner = activated.heartbeatRunner;
         runtimeState.stopModelPricingRefresh = activated.stopModelPricingRefresh;
       });
+      void import("../project-workflows/worker.js")
+        .then(({ startProjectWorkflowWorker }) => {
+          if (closePreludeStarted) {
+            return;
+          }
+          const worker = startProjectWorkflowWorker({
+            getConfig: () =>
+              resolveGatewayPluginConfig({
+                config: getRuntimeConfig(),
+              }),
+          });
+          runtimeState.gatewayLifetimeSidecars.push(worker);
+        })
+        .catch((err: unknown) => {
+          log.warn("project workflow async worker failed to start: " + String(err));
+        });
     };
     ({
       stopGatewayUpdateCheck: runtimeState.stopGatewayUpdateCheck,
