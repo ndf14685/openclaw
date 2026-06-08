@@ -1,6 +1,8 @@
 export type ProjectWorkflowStatus =
   | "draft_goal"
+  | "architect_queued"
   | "architect_running"
+  | "architect_failed"
   | "awaiting_human_approval"
   | "approved_for_implementation"
   | "implementer_running"
@@ -38,6 +40,7 @@ export type ProjectWorkflowTestResult = {
 
 export type ProjectWorkflowArtifact = {
   architectProposal?: string;
+  architectError?: string;
   implementationSummary?: string;
   reviewMode?: "advisory" | "required";
   reviewSummary?: string;

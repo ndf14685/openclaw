@@ -21,7 +21,7 @@ import type {
 } from "./types.js";
 
 const execFileAsync = promisify(execFile);
-const CLAUDE_ARCHITECT_TIMEOUT_MS = 120_000;
+const DEFAULT_CLAUDE_ARCHITECT_TIMEOUT_MS = 300_000;
 const CLAUDE_ARCHITECT_MAX_BUFFER = 64 * 1024;
 const CODEX_IMPLEMENTER_TIMEOUT_MS = 300_000;
 const CODEX_REVIEWER_TIMEOUT_MS = 300_000;
@@ -59,10 +59,17 @@ const TERMINAL_STATUSES = new Set<ProjectWorkflowStatus>([
   "completed_with_warnings",
   "review_failed",
   "architecture_review_failed",
+  "architect_failed",
   "rejected",
   "cancelled",
   "blocked",
 ]);
+
+type ArchitectRunner = (params: {
+  goal: string;
+  projectId: string;
+  timeoutMs: number;
+}) => Promise<string>;
 
 type ImplementerTestResult = {
   command: string;
@@ -110,7 +117,7 @@ export type ProjectWorkflowRuntimeOptions = {
   now?: () => Date;
   idFactory?: () => string;
   isHeartbeat?: boolean;
-  architectRunner?: (params: { goal: string; projectId: string }) => Promise<string>;
+  architectRunner?: ArchitectRunner;
   implementerRunner?: (params: {
     workflow: ProjectWorkflowRecord;
     project: ResolvedProjectWorkflowProjectConfig;
@@ -126,6 +133,39 @@ export type ProjectWorkflowRuntimeOptions = {
     implementerResult: ImplementerResult;
   }) => Promise<ReviewerResult>;
 };
+
+function resolveClaudeArchitectTimeoutMs(): number {
+  const raw = process.env.CLAUDE_ARCHITECT_TIMEOUT_MS;
+  if (!raw) {
+    return DEFAULT_CLAUDE_ARCHITECT_TIMEOUT_MS;
+  }
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0
+    ? Math.floor(parsed)
+    : DEFAULT_CLAUDE_ARCHITECT_TIMEOUT_MS;
+}
+
+function formatArchitectTimeoutMessage(timeoutMs: number): string {
+  return "Project Workflow Architect timeout after " + Math.ceil(timeoutMs / 1000) + " seconds.";
+}
+
+function isTimeoutError(error: unknown): boolean {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+  const record = error as { signal?: unknown; killed?: unknown; code?: unknown; message?: unknown };
+  return (
+    record.signal === "SIGTERM" ||
+    record.killed === true ||
+    record.code === "ETIMEDOUT" ||
+    String(record.message ?? "")
+      .toLowerCase()
+      .includes("timed out") ||
+    String(record.message ?? "")
+      .toLowerCase()
+      .includes("timeout")
+  );
+}
 
 function routeKey(route: ProjectWorkflowRoute): string {
   return `${route.channel}:${route.accountId}:${route.chatId}:topic:${route.topicId}`;
@@ -247,12 +287,11 @@ function appendAudit(
   workflow.auditLog.push({ at, status, note } satisfies ProjectWorkflowAuditEvent);
 }
 
-function createWorkflow(params: {
+function createQueuedWorkflow(params: {
   workflowId: string;
   projectId: string;
   route: ProjectWorkflowRoute;
   goal: string;
-  architectProposal: string;
   at: string;
 }): ProjectWorkflowRecord {
   const workflow: ProjectWorkflowRecord = {
@@ -260,25 +299,39 @@ function createWorkflow(params: {
     projectId: params.projectId,
     route: params.route,
     goal: params.goal,
-    status: "awaiting_human_approval",
-    phase: "approval",
+    status: "architect_queued",
+    phase: "architect",
     currentCapability: "architect",
-    artifacts: {
-      architectProposal: params.architectProposal,
-    },
+    artifacts: {},
     auditLog: [],
     createdAt: params.at,
     updatedAt: params.at,
   };
   appendAudit(workflow, "draft_goal", "Goal recibido y normalizado.", params.at);
-  appendAudit(
-    workflow,
-    "architect_running",
-    "Claude genero una propuesta de Architect.",
-    params.at,
-  );
-  appendAudit(workflow, "awaiting_human_approval", "Esperando aprobacion humana.", params.at);
+  appendAudit(workflow, "architect_queued", "Architect encolado para ejecucion async.", params.at);
   return workflow;
+}
+
+function completeArchitectProposal(
+  workflow: ProjectWorkflowRecord,
+  architectProposal: string,
+  at: string,
+): void {
+  workflow.status = "awaiting_human_approval";
+  workflow.phase = "approval";
+  workflow.currentCapability = "architect";
+  workflow.artifacts.architectProposal = architectProposal;
+  workflow.updatedAt = at;
+  appendAudit(workflow, "awaiting_human_approval", "Esperando aprobacion humana.", at);
+}
+
+function failArchitect(workflow: ProjectWorkflowRecord, errorMessage: string, at: string): void {
+  workflow.status = "architect_failed";
+  workflow.phase = "result";
+  workflow.currentCapability = "architect";
+  workflow.artifacts.architectError = errorMessage;
+  workflow.updatedAt = at;
+  appendAudit(workflow, "architect_failed", errorMessage, at);
 }
 
 function buildArchitectPrompt(goal: string, projectId: string): string {
@@ -294,7 +347,11 @@ function buildArchitectPrompt(goal: string, projectId: string): string {
   ].join("\n");
 }
 
-async function runClaudeArchitect(params: { goal: string; projectId: string }): Promise<string> {
+async function runClaudeArchitect(params: {
+  goal: string;
+  projectId: string;
+  timeoutMs: number;
+}): Promise<string> {
   const claudePath =
     process.env.OPENCLAW_PROJECT_WORKFLOW_CLAUDE_CLI ?? "/home/ndf/.local/bin/claude";
   const { stdout } = await execFileAsync(
@@ -309,7 +366,7 @@ async function runClaudeArchitect(params: { goal: string; projectId: string }): 
       buildArchitectPrompt(params.goal, params.projectId),
     ],
     {
-      timeout: CLAUDE_ARCHITECT_TIMEOUT_MS,
+      timeout: params.timeoutMs,
       maxBuffer: CLAUDE_ARCHITECT_MAX_BUFFER,
     },
   );
@@ -1079,6 +1136,27 @@ function formatWorkflowHeader(workflow: ProjectWorkflowRecord): string {
   ].join("\n");
 }
 
+function formatArchitectQueuedReply(workflow: ProjectWorkflowRecord): ReplyPayload {
+  return {
+    text: [
+      formatWorkflowHeader(workflow),
+      "",
+      "Recibi el pedido. El Architect esta analizando.",
+      "Te aviso cuando tenga una propuesta para aprobar.",
+    ].join("\n"),
+  };
+}
+
+function formatArchitectFailedReply(workflow: ProjectWorkflowRecord): ReplyPayload {
+  return {
+    text: [
+      formatWorkflowHeader(workflow),
+      "",
+      workflow.artifacts.architectError ?? "Project Workflow Architect failed.",
+    ].join("\n"),
+  };
+}
+
 function formatApprovalReply(workflow: ProjectWorkflowRecord): ReplyPayload {
   return {
     text: `${formatWorkflowHeader(workflow)}\n\nArchitect (Claude):\n${
@@ -1246,6 +1324,91 @@ function findActiveWorkflow(
     .toSorted((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
 }
 
+export type ProjectWorkflowQueueResult = {
+  processed: number;
+  replies: ReplyPayload[];
+};
+
+export async function processProjectWorkflowQueue(
+  cfg: OpenClawConfig,
+  opts: ProjectWorkflowRuntimeOptions = {},
+): Promise<ProjectWorkflowQueueResult> {
+  if (cfg.project_workflows_enabled !== true) {
+    return { processed: 0, replies: [] };
+  }
+  const storePath = opts.storePath ?? resolveProjectWorkflowStorePath();
+  const nowFactory = opts.now ?? (() => new Date());
+  const architectRunner = opts.architectRunner ?? runClaudeArchitect;
+  const replies: ReplyPayload[] = [];
+  let processed = 0;
+
+  while (true) {
+    const claim = await updateProjectWorkflowStore((store) => {
+      const queued = store.workflows
+        .filter((workflow) => workflow.status === "architect_queued")
+        .toSorted((a, b) => a.updatedAt.localeCompare(b.updatedAt))[0];
+      if (!queued) {
+        return undefined;
+      }
+      const at = nowFactory().toISOString();
+      queued.status = "architect_running";
+      queued.phase = "architect";
+      queued.currentCapability = "architect";
+      queued.updatedAt = at;
+      appendAudit(queued, "architect_running", "Architect async iniciado.", at);
+      return { workflowId: queued.workflowId, goal: queued.goal, projectId: queued.projectId };
+    }, storePath);
+
+    if (!claim) {
+      break;
+    }
+
+    processed += 1;
+    const timeoutMs = resolveClaudeArchitectTimeoutMs();
+    try {
+      const proposal = await architectRunner({
+        goal: claim.goal,
+        projectId: claim.projectId,
+        timeoutMs,
+      });
+      const reply = await updateProjectWorkflowStore((store) => {
+        const workflow = store.workflows.find(
+          (candidate) =>
+            candidate.workflowId === claim.workflowId && candidate.status === "architect_running",
+        );
+        if (!workflow) {
+          return undefined;
+        }
+        completeArchitectProposal(workflow, proposal, nowFactory().toISOString());
+        return formatApprovalReply(workflow);
+      }, storePath);
+      if (reply) {
+        replies.push(reply);
+      }
+    } catch (error) {
+      const message = isTimeoutError(error)
+        ? formatArchitectTimeoutMessage(timeoutMs)
+        : "Project Workflow Architect failed: " + formatExecError(error);
+      const reply = await updateProjectWorkflowStore((store) => {
+        const workflow = store.workflows.find(
+          (candidate) =>
+            candidate.workflowId === claim.workflowId && candidate.status === "architect_running",
+        );
+        if (!workflow) {
+          return undefined;
+        }
+        failArchitect(workflow, message, nowFactory().toISOString());
+        return formatArchitectFailedReply(workflow);
+      }, storePath);
+      if (reply) {
+        replies.push(reply);
+      }
+    }
+  }
+
+  return { processed, replies };
+}
+
 export async function handleProjectWorkflowReply(
   ctx: MsgContext,
   cfg: OpenClawConfig,
@@ -1288,19 +1451,15 @@ export async function handleProjectWorkflowReply(
       if (command === "approve" || command === "reject" || command === "cancel") {
         return formatNoActiveWorkflowReply(route, pilot.projectId);
       }
-      const workflow = createWorkflow({
+      const workflow = createQueuedWorkflow({
         workflowId,
         projectId: pilot.projectId,
         route,
         goal: text || "Goal sin texto",
-        architectProposal: await (opts.architectRunner ?? runClaudeArchitect)({
-          goal: text || "Goal sin texto",
-          projectId: pilot.projectId,
-        }),
         at: now,
       });
       store.workflows.push(workflow);
-      return formatApprovalReply(workflow);
+      return formatArchitectQueuedReply(workflow);
     }
 
     if (command === "status") {
@@ -1321,6 +1480,9 @@ export async function handleProjectWorkflowReply(
       return formatTerminalReply(active, "Propuesta rechazada.");
     }
     if (command === "approve") {
+      if (active.status !== "awaiting_human_approval") {
+        return formatStatusReply(active);
+      }
       const project = resolveProjectConfig(cfg, active.projectId);
       if (!project) {
         applyImplementerResult(
@@ -1373,18 +1535,14 @@ export async function handleProjectWorkflowReply(
           : formatCompletedReply(active);
     }
 
-    const workflow = createWorkflow({
+    const workflow = createQueuedWorkflow({
       workflowId,
       projectId: pilot.projectId,
       route,
       goal: text || "Goal sin texto",
-      architectProposal: await (opts.architectRunner ?? runClaudeArchitect)({
-        goal: text || "Goal sin texto",
-        projectId: pilot.projectId,
-      }),
       at: now,
     });
     store.workflows.push(workflow);
-    return formatApprovalReply(workflow);
+    return formatArchitectQueuedReply(workflow);
   }, storePath);
 }

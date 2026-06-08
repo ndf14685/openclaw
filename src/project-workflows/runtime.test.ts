@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
-import { handleProjectWorkflowReply } from "./runtime.js";
+import { handleProjectWorkflowReply, processProjectWorkflowQueue } from "./runtime.js";
 import { readProjectWorkflowStore } from "./store.js";
 
 const cfg = {
@@ -129,45 +129,189 @@ async function makeStorePath() {
   return path.join(root, "workflows.json");
 }
 
+async function queueAndProcessArchitect(
+  storePath: string,
+  body = "Quiero resolver X",
+  config: OpenClawConfig = cfg,
+  idFactory = () => "pwf_test",
+) {
+  await handleProjectWorkflowReply(telegramTopicCtx(body), config, {
+    storePath,
+    now: () => new Date("2026-06-06T00:00:00.000Z"),
+    idFactory,
+  });
+  return await processProjectWorkflowQueue(config, {
+    storePath,
+    now: () => new Date("2026-06-06T00:00:30.000Z"),
+    architectRunner: testArchitectRunner,
+  });
+}
+
 describe("ProjectWorkflow runtime", () => {
-  it("creates a workflow for the pilot topic and waits for approval", async () => {
+  it("creates a queued workflow for the pilot topic without running Architect inline", async () => {
     const storePath = await makeStorePath();
+    let architectCalled = false;
     const reply = await handleProjectWorkflowReply(telegramTopicCtx("Quiero resolver X"), cfg, {
       storePath,
       now: () => new Date("2026-06-06T00:00:00.000Z"),
       idFactory: () => "pwf_test",
-      architectRunner: testArchitectRunner,
+      architectRunner: async () => {
+        architectCalled = true;
+        return "should not run inline";
+      },
     });
 
     expect(reply?.text).toContain("workflow_id=pwf_test");
-    expect(reply?.text).toContain("phase=awaiting_human_approval");
+    expect(reply?.text).toContain("phase=architect_queued");
     expect(reply?.text).toContain("project=idp-platform");
-    expect(reply?.text).toContain("Architect (Claude)");
-    expect(reply?.text).toContain("Propuesta de Claude para pruebas.");
+    expect(reply?.text).toContain("Recibi el pedido. El Architect esta analizando.");
+    expect(architectCalled).toBe(false);
 
     const store = await readProjectWorkflowStore(storePath);
     expect(store.workflows).toHaveLength(1);
     expect(store.workflows[0]).toMatchObject({
       workflowId: "pwf_test",
       projectId: "idp-platform",
-      status: "awaiting_human_approval",
+      status: "architect_queued",
       goal: "Quiero resolver X",
     });
     expect(store.workflows[0]?.auditLog.map((event) => event.status)).toEqual([
       "draft_goal",
+      "architect_queued",
+    ]);
+  });
+
+  it("processes architect_queued into awaiting approval", async () => {
+    const storePath = await makeStorePath();
+    await handleProjectWorkflowReply(telegramTopicCtx("Quiero resolver X"), cfg, {
+      storePath,
+      idFactory: () => "pwf_test",
+    });
+
+    const result = await processProjectWorkflowQueue(cfg, {
+      storePath,
+      now: () => new Date("2026-06-06T00:00:30.000Z"),
+      architectRunner: testArchitectRunner,
+    });
+
+    expect(result.processed).toBe(1);
+    expect(result.replies[0]?.text).toContain("phase=awaiting_human_approval");
+    expect(result.replies[0]?.text).toContain("Architect (Claude)");
+
+    const store = await readProjectWorkflowStore(storePath);
+    expect(store.workflows[0]?.status).toBe("awaiting_human_approval");
+    expect(store.workflows[0]?.artifacts.architectProposal).toBe(
+      "Propuesta de Claude para pruebas.",
+    );
+    expect(store.workflows[0]?.auditLog.map((event) => event.status)).toEqual([
+      "draft_goal",
+      "architect_queued",
       "architect_running",
       "awaiting_human_approval",
     ]);
   });
 
-  it("advances approval through real Codex implementer and simulated reviewer to completed", async () => {
+  it("marks architect_failed with explicit timeout message", async () => {
     const storePath = await makeStorePath();
     await handleProjectWorkflowReply(telegramTopicCtx("Quiero resolver X"), cfg, {
       storePath,
-      now: () => new Date("2026-06-06T00:00:00.000Z"),
       idFactory: () => "pwf_test",
-      architectRunner: testArchitectRunner,
     });
+
+    const error = new Error("operation timed out");
+    const result = await processProjectWorkflowQueue(cfg, {
+      storePath,
+      architectRunner: async () => {
+        throw error;
+      },
+    });
+
+    expect(result.processed).toBe(1);
+    expect(result.replies[0]?.text).toContain("phase=architect_failed");
+    expect(result.replies[0]?.text).toContain(
+      "Project Workflow Architect timeout after 300 seconds.",
+    );
+
+    const store = await readProjectWorkflowStore(storePath);
+    expect(store.workflows[0]?.status).toBe("architect_failed");
+    expect(store.workflows[0]?.artifacts.architectError).toBe(
+      "Project Workflow Architect timeout after 300 seconds.",
+    );
+  });
+
+  it("passes default and configured Architect timeout to the worker runner", async () => {
+    const original = process.env.CLAUDE_ARCHITECT_TIMEOUT_MS;
+    try {
+      delete process.env.CLAUDE_ARCHITECT_TIMEOUT_MS;
+      const storePath = await makeStorePath();
+      await handleProjectWorkflowReply(telegramTopicCtx("Quiero resolver X"), cfg, {
+        storePath,
+        idFactory: () => "pwf_test",
+      });
+      const seen: number[] = [];
+      await processProjectWorkflowQueue(cfg, {
+        storePath,
+        architectRunner: async ({ timeoutMs }) => {
+          seen.push(timeoutMs);
+          return "Propuesta default timeout";
+        },
+      });
+      expect(seen).toEqual([300_000]);
+
+      process.env.CLAUDE_ARCHITECT_TIMEOUT_MS = "450000";
+      const storePath2 = await makeStorePath();
+      await handleProjectWorkflowReply(telegramTopicCtx("Quiero resolver X"), cfg, {
+        storePath: storePath2,
+        idFactory: () => "pwf_test_2",
+      });
+      const configured: number[] = [];
+      await processProjectWorkflowQueue(cfg, {
+        storePath: storePath2,
+        architectRunner: async ({ timeoutMs }) => {
+          configured.push(timeoutMs);
+          return "Propuesta configured timeout";
+        },
+      });
+      expect(configured).toEqual([450_000]);
+    } finally {
+      if (original === undefined) {
+        delete process.env.CLAUDE_ARCHITECT_TIMEOUT_MS;
+      } else {
+        process.env.CLAUDE_ARCHITECT_TIMEOUT_MS = original;
+      }
+    }
+  });
+
+  it("does not duplicate Architect execution when the worker runs twice", async () => {
+    const storePath = await makeStorePath();
+    await handleProjectWorkflowReply(telegramTopicCtx("Quiero resolver X"), cfg, {
+      storePath,
+      idFactory: () => "pwf_test",
+    });
+    let calls = 0;
+    const first = await processProjectWorkflowQueue(cfg, {
+      storePath,
+      architectRunner: async () => {
+        calls += 1;
+        return "Propuesta una vez";
+      },
+    });
+    const second = await processProjectWorkflowQueue(cfg, {
+      storePath,
+      architectRunner: async () => {
+        calls += 1;
+        return "No deberia correr";
+      },
+    });
+
+    expect(first.processed).toBe(1);
+    expect(second.processed).toBe(0);
+    expect(calls).toBe(1);
+  });
+
+  it("advances approval through real Codex implementer and simulated reviewer to completed", async () => {
+    const storePath = await makeStorePath();
+    await queueAndProcessArchitect(storePath);
 
     const reply = await handleProjectWorkflowReply(telegramTopicCtx("aprobar"), cfg, {
       storePath,
@@ -189,6 +333,7 @@ describe("ProjectWorkflow runtime", () => {
     expect(store.workflows[0]?.artifacts.worktreePath).toBe("/tmp/pwf_test/worktree");
     expect(store.workflows[0]?.auditLog.map((event) => event.status)).toEqual([
       "draft_goal",
+      "architect_queued",
       "architect_running",
       "awaiting_human_approval",
       "approved_for_implementation",
@@ -201,12 +346,7 @@ describe("ProjectWorkflow runtime", () => {
 
   it("marks review_passed before completed when the real reviewer passes", async () => {
     const storePath = await makeStorePath();
-    await handleProjectWorkflowReply(telegramTopicCtx("Quiero resolver X"), cfg, {
-      storePath,
-      now: () => new Date("2026-06-06T00:00:00.000Z"),
-      idFactory: () => "pwf_test",
-      architectRunner: testArchitectRunner,
-    });
+    await queueAndProcessArchitect(storePath);
 
     const reply = await handleProjectWorkflowReply(telegramTopicCtx("aprobar"), cfg, {
       storePath,
@@ -226,6 +366,7 @@ describe("ProjectWorkflow runtime", () => {
     );
     expect(store.workflows[0]?.auditLog.map((event) => event.status)).toEqual([
       "draft_goal",
+      "architect_queued",
       "architect_running",
       "awaiting_human_approval",
       "approved_for_implementation",
@@ -238,11 +379,7 @@ describe("ProjectWorkflow runtime", () => {
 
   it("marks review_failed when the real reviewer fails", async () => {
     const storePath = await makeStorePath();
-    await handleProjectWorkflowReply(telegramTopicCtx("Quiero resolver X"), cfg, {
-      storePath,
-      idFactory: () => "pwf_test",
-      architectRunner: testArchitectRunner,
-    });
+    await queueAndProcessArchitect(storePath);
 
     const reply = await handleProjectWorkflowReply(telegramTopicCtx("aprobar"), cfg, {
       storePath,
@@ -261,11 +398,7 @@ describe("ProjectWorkflow runtime", () => {
 
   it("blocks when the real reviewer reports worktree mutation", async () => {
     const storePath = await makeStorePath();
-    await handleProjectWorkflowReply(telegramTopicCtx("Quiero resolver X"), cfg, {
-      storePath,
-      idFactory: () => "pwf_test",
-      architectRunner: testArchitectRunner,
-    });
+    await queueAndProcessArchitect(storePath);
 
     const reply = await handleProjectWorkflowReply(telegramTopicCtx("aprobar"), cfg, {
       storePath,
@@ -283,11 +416,7 @@ describe("ProjectWorkflow runtime", () => {
 
   it("completes with warnings in advisory mode when technical reviewer fails", async () => {
     const storePath = await makeStorePath();
-    await handleProjectWorkflowReply(telegramTopicCtx("Quiero resolver X"), advisoryCfg, {
-      storePath,
-      idFactory: () => "pwf_test",
-      architectRunner: testArchitectRunner,
-    });
+    await queueAndProcessArchitect(storePath, "Quiero resolver X", advisoryCfg);
 
     const reply = await handleProjectWorkflowReply(telegramTopicCtx("aprobar"), advisoryCfg, {
       storePath,
@@ -310,11 +439,7 @@ describe("ProjectWorkflow runtime", () => {
 
   it("fails architecture review in required mode when architecture reviewer fails", async () => {
     const storePath = await makeStorePath();
-    await handleProjectWorkflowReply(telegramTopicCtx("Quiero resolver X"), cfg, {
-      storePath,
-      idFactory: () => "pwf_test",
-      architectRunner: testArchitectRunner,
-    });
+    await queueAndProcessArchitect(storePath);
 
     const reply = await handleProjectWorkflowReply(telegramTopicCtx("aprobar"), cfg, {
       storePath,
@@ -333,12 +458,7 @@ describe("ProjectWorkflow runtime", () => {
 
   it("blocks the workflow when the real implementer reports an unsafe state", async () => {
     const storePath = await makeStorePath();
-    await handleProjectWorkflowReply(telegramTopicCtx("Quiero resolver X"), cfg, {
-      storePath,
-      now: () => new Date("2026-06-06T00:00:00.000Z"),
-      idFactory: () => "pwf_test",
-      architectRunner: testArchitectRunner,
-    });
+    await queueAndProcessArchitect(storePath);
 
     const reply = await handleProjectWorkflowReply(telegramTopicCtx("aprobar"), cfg, {
       storePath,
@@ -370,11 +490,7 @@ describe("ProjectWorkflow runtime", () => {
 
   it("supports the minimal reject, cancel, and status commands", async () => {
     const storePath = await makeStorePath();
-    await handleProjectWorkflowReply(telegramTopicCtx("Quiero resolver X"), cfg, {
-      storePath,
-      idFactory: () => "pwf_test",
-      architectRunner: testArchitectRunner,
-    });
+    await queueAndProcessArchitect(storePath);
 
     await expect(
       handleProjectWorkflowReply(telegramTopicCtx("estado"), cfg, { storePath }),
@@ -385,11 +501,7 @@ describe("ProjectWorkflow runtime", () => {
       expect.objectContaining({ text: expect.stringContaining("phase=rejected") }),
     );
 
-    await handleProjectWorkflowReply(telegramTopicCtx("Quiero resolver Y"), cfg, {
-      storePath,
-      idFactory: () => "pwf_test_2",
-      architectRunner: testArchitectRunner,
-    });
+    await queueAndProcessArchitect(storePath, "Quiero resolver Y", cfg, () => "pwf_test_2");
     await expect(
       handleProjectWorkflowReply(telegramTopicCtx("cancelar"), cfg, { storePath }),
     ).resolves.toEqual(

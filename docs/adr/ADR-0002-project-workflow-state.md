@@ -283,6 +283,8 @@ A passing real review appends `reviewer_running`, `review_passed`, and then
 `completed` to the audit trail. A failing real review records `review_failed`
 and leaves the worktree/artifacts for human inspection.
 
+Phase execution details, including the first async Architect worker, are documented in [Project Workflow Async Execution](../project-workflows/async-execution.md).
+
 ## Relationship With Telegram
 
 Telegram topics are workflow routes and operator surfaces.
