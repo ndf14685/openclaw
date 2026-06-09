@@ -113,7 +113,10 @@ The worker then advances the remaining phases:
 ```text
 implementation_queued
   -> implementer_running
-  -> review_queued | blocked
+  -> review_queued | awaiting_repo_resolution | blocked
+
+awaiting_repo_resolution
+  -> implementation_queued | cancelled
 
 review_queued
   -> reviewer_running
@@ -130,6 +133,30 @@ Review policy remains supported:
 
 - `review.mode: required` blocks completion on required review failure.
 - `review.mode: advisory` records failures and completes as `completed_with_warnings` when appropriate.
+
+## Dirty Repo Resolution Gate
+
+Before Codex creates a controlled worktree, the Implementer checks the approved repository. If the repo has local changes, OpenClaw does not stash, commit, clean, reset, create a worktree, or execute Codex automatically. The workflow moves to:
+
+```text
+awaiting_repo_resolution
+```
+
+The worker persists diagnostic artifacts under the workflow run directory:
+
+- `repo-resolution/status-short.txt`
+- `repo-resolution/status-ignored-short.txt`
+- `repo-resolution/diff-stat.txt`
+- `repo-resolution/cached-diff-stat.txt`
+- `repo-resolution/summary.json`
+
+Telegram shows a concise summary grouped as tracked modified, staged, untracked, and ignored/generated. The safe operator commands are:
+
+- `estado`: show the repo-resolution summary again.
+- `continuar`: retry implementation after the operator has cleaned or resolved the repo manually.
+- `cancelar`: cancel the workflow.
+
+This first gate is intentionally non-destructive. Future policy-gated actions such as stash, WIP commit, selective clean, or using a worktree from a dirty repo must require explicit project policy and human confirmation.
 
 ## Configuration
 

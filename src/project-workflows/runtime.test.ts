@@ -80,6 +80,15 @@ const blockedImplementerRunner = async () => ({
   status: "blocked" as const,
   summary: "Repo aprobado dirty; no se creo worktree ni se ejecuto Codex.",
   blockedReason: "approved repo has uncommitted or untracked changes",
+  repoResolutionStatusShort: " M catalog/nexusos/all.yaml\n?? scripts/nexusos/diagnose-keycloak.sh",
+  repoResolutionStatusIgnoredShort:
+    " M catalog/nexusos/all.yaml\n?? scripts/nexusos/diagnose-keycloak.sh\n!! dist/generated.js",
+  repoResolutionDiffStat: " catalog/nexusos/all.yaml | 2 ++",
+  repoResolutionCachedDiffStat: "",
+  repoResolutionTrackedModified: ["catalog/nexusos/all.yaml"],
+  repoResolutionStaged: [],
+  repoResolutionUntracked: ["scripts/nexusos/diagnose-keycloak.sh"],
+  repoResolutionIgnoredGenerated: ["dist/generated.js"],
   artifactDir: "/tmp/pwf_test/artifacts",
   changedFiles: [],
   tests: [],
@@ -483,7 +492,7 @@ describe("ProjectWorkflow runtime", () => {
     expect(store.workflows[0]?.artifacts.reviewMode).toBe("required");
   });
 
-  it("blocks the workflow when the real implementer reports an unsafe state", async () => {
+  it("pauses for repo resolution when the approved repo is dirty", async () => {
     const storePath = await makeStorePath();
     await queueAndProcessArchitect(storePath);
 
@@ -491,14 +500,35 @@ describe("ProjectWorkflow runtime", () => {
       implementerRunner: blockedImplementerRunner,
     });
 
-    expect(reply?.text).toContain("phase=blocked");
-    expect(reply?.text).toContain("Implementer (Codex real): BLOCKED");
-    expect(reply?.text).toContain("approved repo has uncommitted or untracked changes");
-    expect(reply?.text).toContain("Reviewer simulado: no se ejecuto");
+    expect(reply?.text).toContain("phase=awaiting_repo_resolution");
+    expect(reply?.text).toContain("El repo aprobado tiene cambios locales");
+    expect(reply?.text).toContain("tracked modified: 1");
+    expect(reply?.text).toContain("untracked: 1");
+    expect(reply?.text).toContain("continuar - reintentar");
+    expect(reply?.text).not.toContain("Implementer (Codex real): BLOCKED");
 
     const store = await readProjectWorkflowStore(storePath);
-    expect(store.workflows[0]?.status).toBe("blocked");
+    expect(store.workflows[0]?.status).toBe("awaiting_repo_resolution");
     expect(store.workflows[0]?.artifacts.implementerStatus).toBe("blocked");
+    expect(store.workflows[0]?.auditLog.at(-1)?.status).toBe("awaiting_repo_resolution");
+  });
+
+  it("requeues implementation after the operator asks to continue repo resolution", async () => {
+    const storePath = await makeStorePath();
+    await queueAndProcessArchitect(storePath);
+    await approveAndProcess(storePath, cfg, { implementerRunner: blockedImplementerRunner });
+
+    const reply = await handleProjectWorkflowReply(telegramTopicCtx("continuar"), cfg, {
+      storePath,
+      now: () => new Date("2026-06-06T00:02:00.000Z"),
+    });
+
+    expect(reply?.text).toContain("phase=implementation_queued");
+    expect(reply?.text).toContain("Workflow aprobado. Implementer en ejecucion.");
+
+    const store = await readProjectWorkflowStore(storePath);
+    expect(store.workflows[0]?.status).toBe("implementation_queued");
+    expect(store.workflows[0]?.auditLog.at(-1)?.note).toContain("reintentar Implementer");
   });
 
   it("recovers stale architect_running into architect_failed", async () => {

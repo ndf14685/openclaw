@@ -7,6 +7,7 @@ export type ProjectWorkflowStatus =
   | "approved_for_implementation"
   | "implementation_queued"
   | "implementer_running"
+  | "awaiting_repo_resolution"
   | "review_queued"
   | "reviewer_running"
   | "review_passed"
@@ -70,6 +71,15 @@ export type ProjectWorkflowArtifact = {
   architectureReviewDiffAfterPath?: string;
   implementerStatus?: "completed" | "blocked";
   blockedReason?: string;
+  repoResolutionReason?: string;
+  repoResolutionStatusShort?: string;
+  repoResolutionStatusIgnoredShort?: string;
+  repoResolutionDiffStat?: string;
+  repoResolutionCachedDiffStat?: string;
+  repoResolutionTrackedModified?: string[];
+  repoResolutionStaged?: string[];
+  repoResolutionUntracked?: string[];
+  repoResolutionIgnoredGenerated?: string[];
   worktreePath?: string;
   branchName?: string;
   artifactDir?: string;
@@ -106,4 +116,10 @@ export type ProjectWorkflowStore = {
   workflows: ProjectWorkflowRecord[];
 };
 
-export type ProjectWorkflowCommand = "approve" | "reject" | "cancel" | "status" | "goal";
+export type ProjectWorkflowCommand =
+  | "approve"
+  | "reject"
+  | "cancel"
+  | "status"
+  | "continue"
+  | "goal";

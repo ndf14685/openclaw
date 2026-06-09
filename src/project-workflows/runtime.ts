@@ -27,6 +27,7 @@ const CODEX_IMPLEMENTER_TIMEOUT_MS = 1_800_000;
 const CODEX_REVIEWER_TIMEOUT_MS = 300_000;
 const PROJECT_WORKFLOW_DEFAULT_POLL_INTERVAL_MS = 5_000;
 const IMPLEMENTER_MAX_BUFFER = 256 * 1024;
+const DIRTY_REPO_BLOCKED_REASON = "approved repo has uncommitted or untracked changes";
 
 const DEFAULT_PILOT: Required<ProjectWorkflowPilotConfig> = {
   channel: "telegram",
@@ -83,6 +84,14 @@ type ImplementerResult = {
   status: "completed" | "blocked";
   summary: string;
   blockedReason?: string;
+  repoResolutionStatusShort?: string;
+  repoResolutionStatusIgnoredShort?: string;
+  repoResolutionDiffStat?: string;
+  repoResolutionCachedDiffStat?: string;
+  repoResolutionTrackedModified?: string[];
+  repoResolutionStaged?: string[];
+  repoResolutionUntracked?: string[];
+  repoResolutionIgnoredGenerated?: string[];
   artifactDir: string;
   worktreePath?: string;
   branchName?: string;
@@ -204,6 +213,9 @@ function classifyCommand(text: string): ProjectWorkflowCommand {
   }
   if (normalized === "estado") {
     return "status";
+  }
+  if (normalized === "continuar") {
+    return "continue";
   }
   return "goal";
 }
@@ -486,6 +498,84 @@ async function runGit(
   return { stdout: String(stdout), stderr: String(stderr) };
 }
 
+type RepoResolutionDiagnostics = {
+  statusShort: string;
+  statusIgnoredShort: string;
+  diffStat: string;
+  cachedDiffStat: string;
+  trackedModified: string[];
+  staged: string[];
+  untracked: string[];
+  ignoredGenerated: string[];
+};
+
+function parseRepoStatusLines(
+  status: string,
+): Pick<
+  RepoResolutionDiagnostics,
+  "trackedModified" | "staged" | "untracked" | "ignoredGenerated"
+> {
+  const trackedModified: string[] = [];
+  const staged: string[] = [];
+  const untracked: string[] = [];
+  const ignoredGenerated: string[] = [];
+  for (const line of status.split("\n")) {
+    if (!line.trim()) {
+      continue;
+    }
+    const code = line.slice(0, 2);
+    const file = line.slice(3).trim();
+    if (code === "??") {
+      untracked.push(file);
+      continue;
+    }
+    if (code === "!!") {
+      ignoredGenerated.push(file);
+      continue;
+    }
+    if (code[0] !== " " && code[0] !== "?") {
+      staged.push(file);
+    }
+    if (code[1] !== " " && code[1] !== "?") {
+      trackedModified.push(file);
+    }
+  }
+  return { trackedModified, staged, untracked, ignoredGenerated };
+}
+
+async function collectRepoResolutionDiagnostics(
+  repoPath: string,
+  artifactDir: string,
+): Promise<RepoResolutionDiagnostics> {
+  const [statusShort, statusIgnoredShort, diffStat, cachedDiffStat] = await Promise.all([
+    runGit(["status", "--short"], repoPath).then((result) => result.stdout.trim()),
+    runGit(["status", "--ignored", "--short"], repoPath).then((result) => result.stdout.trim()),
+    runGit(["diff", "--stat"], repoPath).then((result) => result.stdout.trim()),
+    runGit(["diff", "--cached", "--stat"], repoPath).then((result) => result.stdout.trim()),
+  ]);
+  await fs.mkdir(path.join(artifactDir, "repo-resolution"), { recursive: true });
+  await writeArtifact(
+    path.join(artifactDir, "repo-resolution", "status-short.txt"),
+    statusShort + "\n",
+  );
+  await writeArtifact(
+    path.join(artifactDir, "repo-resolution", "status-ignored-short.txt"),
+    statusIgnoredShort + "\n",
+  );
+  await writeArtifact(path.join(artifactDir, "repo-resolution", "diff-stat.txt"), diffStat + "\n");
+  await writeArtifact(
+    path.join(artifactDir, "repo-resolution", "cached-diff-stat.txt"),
+    cachedDiffStat + "\n",
+  );
+  const parsed = parseRepoStatusLines(statusIgnoredShort || statusShort);
+  const diagnostics = { statusShort, statusIgnoredShort, diffStat, cachedDiffStat, ...parsed };
+  await writeArtifact(
+    path.join(artifactDir, "repo-resolution", "summary.json"),
+    JSON.stringify(diagnostics, null, 2) + "\n",
+  );
+  return diagnostics;
+}
+
 function buildCodexPrompt(
   workflow: ProjectWorkflowRecord,
   project: ResolvedProjectWorkflowProjectConfig,
@@ -522,6 +612,14 @@ async function blockedImplementerResult(params: {
   artifactDir: string;
   summary: string;
   blockedReason: string;
+  repoResolutionStatusShort?: string;
+  repoResolutionStatusIgnoredShort?: string;
+  repoResolutionDiffStat?: string;
+  repoResolutionCachedDiffStat?: string;
+  repoResolutionTrackedModified?: string[];
+  repoResolutionStaged?: string[];
+  repoResolutionUntracked?: string[];
+  repoResolutionIgnoredGenerated?: string[];
   worktreePath?: string;
   branchName?: string;
   changedFiles?: string[];
@@ -536,6 +634,14 @@ async function blockedImplementerResult(params: {
     status: "blocked",
     summary: params.summary,
     blockedReason: params.blockedReason,
+    repoResolutionStatusShort: params.repoResolutionStatusShort,
+    repoResolutionStatusIgnoredShort: params.repoResolutionStatusIgnoredShort,
+    repoResolutionDiffStat: params.repoResolutionDiffStat,
+    repoResolutionCachedDiffStat: params.repoResolutionCachedDiffStat,
+    repoResolutionTrackedModified: params.repoResolutionTrackedModified,
+    repoResolutionStaged: params.repoResolutionStaged,
+    repoResolutionUntracked: params.repoResolutionUntracked,
+    repoResolutionIgnoredGenerated: params.repoResolutionIgnoredGenerated,
     artifactDir: params.artifactDir,
     worktreePath: params.worktreePath,
     branchName: params.branchName,
@@ -569,10 +675,19 @@ async function runCodexImplementer(params: {
   }
   await writeArtifact(path.join(artifactDir, "git-status-before.txt"), repoStatus + "\n");
   if (repoStatus) {
+    const diagnostics = await collectRepoResolutionDiagnostics(project.repoPath, artifactDir);
     return await blockedImplementerResult({
       artifactDir,
       summary: "Repo aprobado dirty; no se creo worktree ni se ejecuto Codex.",
-      blockedReason: "approved repo has uncommitted or untracked changes",
+      blockedReason: DIRTY_REPO_BLOCKED_REASON,
+      repoResolutionStatusShort: diagnostics.statusShort,
+      repoResolutionStatusIgnoredShort: diagnostics.statusIgnoredShort,
+      repoResolutionDiffStat: diagnostics.diffStat,
+      repoResolutionCachedDiffStat: diagnostics.cachedDiffStat,
+      repoResolutionTrackedModified: diagnostics.trackedModified,
+      repoResolutionStaged: diagnostics.staged,
+      repoResolutionUntracked: diagnostics.untracked,
+      repoResolutionIgnoredGenerated: diagnostics.ignoredGenerated,
     });
   }
 
@@ -950,6 +1065,16 @@ function applyImplementerResult(
   workflow.artifacts.implementationSummary = result.summary;
   workflow.artifacts.implementerStatus = result.status;
   workflow.artifacts.blockedReason = result.blockedReason;
+  workflow.artifacts.repoResolutionReason =
+    result.blockedReason === DIRTY_REPO_BLOCKED_REASON ? result.blockedReason : undefined;
+  workflow.artifacts.repoResolutionStatusShort = result.repoResolutionStatusShort;
+  workflow.artifacts.repoResolutionStatusIgnoredShort = result.repoResolutionStatusIgnoredShort;
+  workflow.artifacts.repoResolutionDiffStat = result.repoResolutionDiffStat;
+  workflow.artifacts.repoResolutionCachedDiffStat = result.repoResolutionCachedDiffStat;
+  workflow.artifacts.repoResolutionTrackedModified = result.repoResolutionTrackedModified;
+  workflow.artifacts.repoResolutionStaged = result.repoResolutionStaged;
+  workflow.artifacts.repoResolutionUntracked = result.repoResolutionUntracked;
+  workflow.artifacts.repoResolutionIgnoredGenerated = result.repoResolutionIgnoredGenerated;
   workflow.artifacts.worktreePath = result.worktreePath;
   workflow.artifacts.branchName = result.branchName;
   workflow.artifacts.artifactDir = result.artifactDir;
@@ -960,6 +1085,18 @@ function applyImplementerResult(
   workflow.phaseCompletedAt = at;
 
   if (result.status === "blocked") {
+    if (result.blockedReason === DIRTY_REPO_BLOCKED_REASON) {
+      workflow.status = "awaiting_repo_resolution";
+      workflow.phase = "implementer";
+      workflow.currentCapability = "implementer";
+      appendAudit(
+        workflow,
+        "awaiting_repo_resolution",
+        "Repo aprobado dirty; esperando resolucion manual del operador.",
+        at,
+      );
+      return;
+    }
     workflow.status = "blocked";
     workflow.phase = "result";
     workflow.currentCapability = "implementer";
@@ -1174,7 +1311,61 @@ function formatImplementationQueuedReply(workflow: ProjectWorkflowRecord): Reply
   };
 }
 
+function truncateList(values: string[] | undefined, limit = 20): string {
+  if (!values?.length) {
+    return "- ninguno";
+  }
+  const shown = values.slice(0, limit).map((value) => "- " + value);
+  if (values.length > limit) {
+    shown.push("- ... " + (values.length - limit) + " mas");
+  }
+  return shown.join("\n");
+}
+
+function formatRepoResolutionReply(workflow: ProjectWorkflowRecord): ReplyPayload {
+  const tracked = workflow.artifacts.repoResolutionTrackedModified ?? [];
+  const staged = workflow.artifacts.repoResolutionStaged ?? [];
+  const untracked = workflow.artifacts.repoResolutionUntracked ?? [];
+  const ignored = workflow.artifacts.repoResolutionIgnoredGenerated ?? [];
+  return {
+    text: [
+      formatWorkflowHeader(workflow),
+      "",
+      "El repo aprobado tiene cambios locales. No voy a ejecutar Implementer hasta resolverlo.",
+      "",
+      "Motivo:",
+      workflow.artifacts.repoResolutionReason ?? DIRTY_REPO_BLOCKED_REASON,
+      "",
+      "Resumen:",
+      "tracked modified: " + tracked.length,
+      "staged: " + staged.length,
+      "untracked: " + untracked.length,
+      "ignored/generated: " + ignored.length,
+      "",
+      "Tracked modified:",
+      truncateList(tracked),
+      "",
+      "Staged:",
+      truncateList(staged),
+      "",
+      "Untracked:",
+      truncateList(untracked),
+      "",
+      "Artifacts:",
+      workflow.artifacts.artifactDir ?? "no registrado",
+      "",
+      "Opciones seguras:",
+      "estado - ver estado del workflow",
+      "continuar - reintentar si ya limpiaste el repo manualmente",
+      "cancelar - cancelar el workflow",
+    ].join("\n"),
+  };
+}
+
 function formatStatusReply(workflow: ProjectWorkflowRecord): ReplyPayload {
+  if (workflow.status === "awaiting_repo_resolution") {
+    return formatRepoResolutionReply(workflow);
+  }
   const lastEvent = workflow.auditLog.at(-1);
   return {
     text: `${formatWorkflowHeader(workflow)}\n\nGoal:\n${workflow.goal}\n\nUltimo evento: ${
@@ -1525,6 +1716,14 @@ function implementerResultFromArtifacts(workflow: ProjectWorkflowRecord): Implem
     status: workflow.artifacts.implementerStatus ?? "blocked",
     summary: workflow.artifacts.implementationSummary ?? "Implementer sin resumen registrado.",
     blockedReason: workflow.artifacts.blockedReason,
+    repoResolutionStatusShort: workflow.artifacts.repoResolutionStatusShort,
+    repoResolutionStatusIgnoredShort: workflow.artifacts.repoResolutionStatusIgnoredShort,
+    repoResolutionDiffStat: workflow.artifacts.repoResolutionDiffStat,
+    repoResolutionCachedDiffStat: workflow.artifacts.repoResolutionCachedDiffStat,
+    repoResolutionTrackedModified: workflow.artifacts.repoResolutionTrackedModified,
+    repoResolutionStaged: workflow.artifacts.repoResolutionStaged,
+    repoResolutionUntracked: workflow.artifacts.repoResolutionUntracked,
+    repoResolutionIgnoredGenerated: workflow.artifacts.repoResolutionIgnoredGenerated,
     artifactDir: workflow.artifacts.artifactDir ?? defaultArtifactRoot(workflow.workflowId),
     worktreePath: workflow.artifacts.worktreePath,
     branchName: workflow.artifacts.branchName,
@@ -1651,6 +1850,9 @@ async function runClaimedImplementation(
       return undefined;
     }
     applyImplementerResult(workflow, result, nowFactory().toISOString());
+    if (workflow.status === "awaiting_repo_resolution") {
+      return formatRepoResolutionReply(workflow);
+    }
     return result.status === "blocked" ? formatBlockedReply(workflow) : undefined;
   }, storePath);
   return reply ? { route: claim.route, payload: reply } : undefined;
@@ -2006,7 +2208,12 @@ export async function handleProjectWorkflowReply(
       if (command === "status") {
         return formatNoActiveWorkflowReply(route, pilot.projectId);
       }
-      if (command === "approve" || command === "reject" || command === "cancel") {
+      if (
+        command === "approve" ||
+        command === "reject" ||
+        command === "cancel" ||
+        command === "continue"
+      ) {
         return formatNoActiveWorkflowReply(route, pilot.projectId);
       }
       const workflow = createQueuedWorkflow({
@@ -2036,6 +2243,23 @@ export async function handleProjectWorkflowReply(
       active.updatedAt = now;
       appendAudit(active, "rejected", "Propuesta rechazada por el operador.", now);
       return formatTerminalReply(active, "Propuesta rechazada.");
+    }
+    if (command === "continue") {
+      if (active.status !== "awaiting_repo_resolution") {
+        return formatStatusReply(active);
+      }
+      active.status = "implementation_queued";
+      active.phase = "implementer";
+      active.currentCapability = "implementer";
+      active.updatedAt = now;
+      active.phaseStartedAt = now;
+      appendAudit(
+        active,
+        "implementation_queued",
+        "Operador solicito reintentar Implementer despues de resolver repo dirty.",
+        now,
+      );
+      return formatImplementationQueuedReply(active);
     }
     if (command === "approve") {
       if (active.status !== "awaiting_human_approval") {
