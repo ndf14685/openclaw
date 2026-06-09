@@ -51,12 +51,29 @@ export type CapabilitiesConfig = {
   bindings?: Record<string, CapabilityBindingConfig>;
 };
 
+export type ProjectWorkflowPilotConfig = {
+  channel?: string;
+  accountId?: string;
+  chatId?: string;
+  topicId: string;
+  projectId: string;
+};
+
+export type ProjectWorkflowsConfig = {
+  /** Pilot routes eligible for the dry-run ProjectWorkflow runtime. */
+  pilots?: ProjectWorkflowPilotConfig[];
+};
+
 export type OpenClawConfig = {
   $schema?: string;
   /** Global opt-in for capability-based routing. Missing/false preserves current routing. */
   capabilities_enabled?: boolean;
   /** Optional capability routing bindings. Ignored unless capabilities_enabled is true. */
   capabilities?: CapabilitiesConfig;
+  /** Global opt-in for ProjectWorkflow routing. Missing/false preserves legacy routing. */
+  project_workflows_enabled?: boolean;
+  /** Optional ProjectWorkflow dry-run configuration. */
+  project_workflows?: ProjectWorkflowsConfig;
   meta?: {
     /** Last OpenClaw version that wrote this config. */
     lastTouchedVersion?: string;

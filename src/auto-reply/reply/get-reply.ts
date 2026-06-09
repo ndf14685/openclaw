@@ -87,6 +87,9 @@ const hookRunnerGlobalLoader = createLazyImportLoader(
   () => import("../../plugins/hook-runner-global.js"),
 );
 const originRoutingLoader = createLazyImportLoader(() => import("./origin-routing.js"));
+const projectWorkflowRuntimeLoader = createLazyImportLoader(
+  () => import("../../project-workflows/runtime.js"),
+);
 
 function loadHookRunnerGlobal() {
   return hookRunnerGlobalLoader.load();
@@ -94,6 +97,10 @@ function loadHookRunnerGlobal() {
 
 function loadOriginRouting() {
   return originRoutingLoader.load();
+}
+
+function loadProjectWorkflowRuntime() {
+  return projectWorkflowRuntimeLoader.load();
 }
 
 function mergeSkillFilters(channelFilter?: string[], agentFilter?: string[]): string[] | undefined {
@@ -190,6 +197,13 @@ export async function getReplyFromConfig(
     cfg,
     isFastTestEnv,
   });
+  if (cfg.project_workflows_enabled === true && opts?.isHeartbeat !== true) {
+    const { handleProjectWorkflowReply } = await loadProjectWorkflowRuntime();
+    const projectWorkflowReply = await handleProjectWorkflowReply(ctx, cfg);
+    if (projectWorkflowReply) {
+      return projectWorkflowReply;
+    }
+  }
   const targetSessionKey =
     ctx.CommandSource === "native"
       ? normalizeOptionalString(ctx.CommandTargetSessionKey)

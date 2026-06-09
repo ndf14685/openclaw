@@ -351,11 +351,32 @@ const CommitmentsSchema = z
   .strict()
   .optional();
 
+const ProjectWorkflowsSchema = z
+  .object({
+    pilots: z
+      .array(
+        z
+          .object({
+            channel: z.string().min(1).optional(),
+            accountId: z.string().min(1).optional(),
+            chatId: z.string().min(1).optional(),
+            topicId: z.string().min(1),
+            projectId: z.string().min(1),
+          })
+          .strict(),
+      )
+      .optional(),
+  })
+  .strict()
+  .optional();
+
 export const OpenClawSchema = z
   .object({
     $schema: z.string().optional(),
     capabilities_enabled: z.boolean().optional(),
     capabilities: CapabilitiesSchema,
+    project_workflows_enabled: z.boolean().optional(),
+    project_workflows: ProjectWorkflowsSchema,
     meta: z
       .object({
         lastTouchedVersion: z.string().optional(),

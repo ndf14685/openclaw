@@ -256,6 +256,28 @@ not call architect, implementer, reviewer, or researcher agents.
 
 The first operator pilot topic is Telegram topic `2679`.
 
+The Phase 0 feature flag is `project_workflows_enabled`. It defaults to
+disabled when absent or false.
+
+Pilot routes may be declared with `project_workflows.pilots`:
+
+```json
+{
+  "project_workflows_enabled": true,
+  "project_workflows": {
+    "pilots": [
+      {
+        "channel": "telegram",
+        "accountId": "default",
+        "chatId": "<telegram-chat-id>",
+        "topicId": "2679",
+        "projectId": "idp-platform"
+      }
+    ]
+  }
+}
+```
+
 Dry-run inputs:
 
 - channel: `telegram`;
