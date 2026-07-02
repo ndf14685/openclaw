@@ -45,12 +45,17 @@ política de ruteo.
 
 ## Próximos pasos conocidos
 
-- OC-01 (sprint 2026-07-01): auditoría de repo + `Architecture.md` + top 10
-  riesgos — pendiente, evaluar si se hace sobre este repo directamente o
-  sobre `/home/ndf/.openclaw/workspace/docs/OPENCLAW_INFRA_ARCHITECTURE.md`
-  ya existente (evitar duplicar).
-- OC-05: SAST/SCA/secret scanning en el pipeline — verificar si ya hay CI
-  configurado en `.github/` antes de agregar uno nuevo.
+- **OC-01 cerrado (2026-07-02)**: `Architecture.md` en la raíz de este repo
+  - 10 issues de tracking en `ndf14685/openclaw#1-10` (issues del fork
+    habilitados para esto, estaban deshabilitados por default). Hallazgo
+    crítico: el servicio en producción corre desde un paquete npm global
+    (2026.6.1), no desde este repo git (2026.5.6) — sin proceso de deploy
+    documentado entre ambos. También: fork 21.100 commits detrás de
+    upstream desde 2026-05-08, gateway expuesto en toda la LAN contra el
+    trust model de upstream, runbook operativo desactualizado, backup de
+    3.99GB sin cifrar en el working tree (no trackeado por git).
+- OC-05: hecho en `idp-platform`, no en este repo (SAST/SCA/secret
+  scanning ya vive en `idp-platform/.github/workflows/idp-security-gates.yml`).
 
 ## Historial de decisiones relevantes
 
