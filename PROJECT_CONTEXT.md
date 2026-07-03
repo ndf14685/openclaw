@@ -56,12 +56,24 @@ política de ruteo.
     3.99GB sin cifrar en el working tree (no trackeado por git).
 - OC-05: hecho en `idp-platform`, no en este repo (SAST/SCA/secret
   scanning ya vive en `idp-platform/.github/workflows/idp-security-gates.yml`).
+- **JV-02 implementado (2026-07-02)**: nuevo topic de Telegram
+  `Claude-Directo` (`message_thread_id: 4378`) enlazado a `agentId: claude`
+  en `~/.openclaw/openclaw.json` — ruta directa sin pasar por Codex,
+  aditiva (los otros 23 topics siguen en Codex). Implementado a nivel de
+  config porque el código de routing propio del fork
+  (`collaboration-policy.ts`/`router-decision.ts`, commit `31adc5c50a`) no
+  está desplegado en el paquete npm que corre en producción — mismo
+  hallazgo que OC-01. Ver
+  `jarvis-openclaw-desktop/docs/operacion-ia/JV-02-ruta-directa-claude-implementada.md`.
+  Falta validación final: un mensaje real del humano en ese topic.
 
 ## Historial de decisiones relevantes
 
-- Todos los topics de Telegram están pineados a Codex desde 2026-05-30;
-  Claude es delegate subagent, no entry point directo (ver
-  `~/.openclaw/workspace/docs/AGENT_HANDOFF.md`).
+- Todos los topics de Telegram estuvieron pineados a Codex desde
+  2026-05-30 hasta 2026-07-02, cuando se agregó la única excepción
+  (`Claude-Directo`, aditiva) para JV-02. Claude sigue sin ser el entry
+  point por default — sigue siendo delegate subagent para el resto de los
+  topics (ver `~/.openclaw/workspace/docs/AGENT_HANDOFF.md`).
 - Ya existe `~/.openclaw/workspace/docs/OPENCLAW_INFRA_ARCHITECTURE.md` — la
   auditoría OC-01 debería referenciarlo/actualizarlo, no reemplazarlo a
   ciegas.
